@@ -1,0 +1,41 @@
+{
+    "name": "semitexa/scheduler",
+    "description": "Semitexa Scheduler \u2014 recurring and delayed background jobs with storage-backed planning, lease-based workers, and overlap protection",
+    "type": "semitexa-module",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Semitexa",
+            "email": "support@semitexa.com"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "semitexa/core": "*",
+        "semitexa/orm": "*",
+        "semitexa/tenancy": "*",
+        "dragonmantank/cron-expression": "^3.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Semitexa\\Scheduler\\": "src/"
+        }
+    },
+    "extra": {
+        "semitexa-module": {
+            "name": "scheduler",
+            "description": "Recurring and delayed background jobs: cron schedules, one-off delayed jobs, lease workers, overlap protection"
+        }
+    },
+    "version": "0.0.1",
+    "keywords": [
+        "semitexa",
+        "scheduler",
+        "cron",
+        "jobs",
+        "queue",
+        "filesystem",
+        "s3",
+        "minio"
+    ]
+}

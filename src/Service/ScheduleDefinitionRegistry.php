@@ -1,0 +1,54 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Semitexa\Scheduler\Service;
+
+use Semitexa\Core\Discovery\ClassDiscovery;
+use Semitexa\Scheduler\Attribute\AsScheduledJob;
+use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
+use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
+
+final class ScheduleDefinitionRegistry
+{
+    public function __construct(
+        private readonly ScheduleDefinitionRepositoryInterface $repository,
+    ) {}
+
+    /**
+     * Discover all classes tagged with #[AsScheduledJob] and upsert them into the DB.
+     */
+    public function sync(): void
+    {
+        $classes = ClassDiscovery::findClassesWithAttribute(AsScheduledJob::class);
+
+        foreach ($classes as $class) {
+            $reflection = new \ReflectionClass($class);
+            $attrs = $reflection->getAttributes(AsScheduledJob::class);
+            if ($attrs === []) {
+                continue;
+            }
+            /** @var AsScheduledJob $attr */
+            $attr = $attrs[0]->newInstance();
+            $existing = $this->repository->findByKey($attr->key);
+            $definition = $existing ?? new ScheduleDefinition();
+            $definition->scheduleKey = $attr->key;
+            $definition->jobClass = $class;
+            $definition->cronExpression = $attr->cronExpression;
+            $definition->pool = $attr->pool;
+            $definition->overlapPolicy = $attr->overlapPolicy;
+            $definition->misfirePolicy = $attr->misfirePolicy;
+            $definition->tenantMode = $attr->tenantMode;
+            $definition->maxAttempts = $attr->maxAttempts;
+            $definition->retryBackoffSeconds = $attr->retryBackoffSeconds;
+            $definition->maxCatchUpRuns = $attr->maxCatchUpRuns;
+            $this->repository->save($definition);
+        }
+    }
+
+    /** @return list<ScheduleDefinition> */
+    public function all(): array
+    {
+        return $this->repository->findAllEnabled();
+    }
+}
