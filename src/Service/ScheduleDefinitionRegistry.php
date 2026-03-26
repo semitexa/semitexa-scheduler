@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Service;
 
+use Semitexa\Core\Attributes\AsService;
 use Semitexa\Core\Discovery\ClassDiscovery;
 use Semitexa\Scheduler\Attribute\AsScheduledJob;
 use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 
+#[AsService]
 final class ScheduleDefinitionRegistry
 {
     public function __construct(

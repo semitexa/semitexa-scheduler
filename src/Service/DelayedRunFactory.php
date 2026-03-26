@@ -4,16 +4,17 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Service;
 
+use Semitexa\Core\Attributes\AsService;
 use Semitexa\Scheduler\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Enum\RunStatus;
 use Semitexa\Scheduler\Enum\SourceType;
 
+#[AsService]
 final class DelayedRunFactory
 {
-    public function __construct(
-        private readonly ScheduledRunRepositoryInterface $runRepository,
-    ) {}
+    #[\Semitexa\Core\Attributes\InjectAsReadonly]
+    protected ?ScheduledRunRepositoryInterface $runRepository = null;
 
     public function create(
         string $jobClass,
@@ -26,6 +27,10 @@ final class DelayedRunFactory
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
     ): string {
+        if ($this->runRepository === null) {
+            throw new \RuntimeException('ScheduledRunRepositoryInterface is not available.');
+        }
+
         $run = new ScheduledRun();
         $run->sourceType = SourceType::Delayed->value;
         $run->jobClass = $jobClass;
