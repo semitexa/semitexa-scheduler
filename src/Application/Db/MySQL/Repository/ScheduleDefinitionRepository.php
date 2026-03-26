@@ -44,6 +44,14 @@ class ScheduleDefinitionRepository extends AbstractRepository implements Schedul
 
     public function save(object $definition): void
     {
+        if (!$definition instanceof ScheduleDefinition) {
+            throw new \InvalidArgumentException(sprintf(
+                'Expected %s, got %s.',
+                ScheduleDefinition::class,
+                $definition::class,
+            ));
+        }
+
         $resource = SchedulerScheduleDefinitionResource::fromDomain($definition);
         parent::save($resource);
         $definition->id = $resource->id;

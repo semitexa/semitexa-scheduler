@@ -27,8 +27,12 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         return SchedulerRunResource::class;
     }
 
-    public function findById(string $id): ?ScheduledRun
+    public function findById(int|string $id): ?ScheduledRun
     {
+        if (!is_string($id)) {
+            return null;
+        }
+
         $binId = Uuid7::toBytes($id);
         $result = $this->db->execute(
             'SELECT * FROM scheduler_runs WHERE id = :id LIMIT 1',
@@ -49,8 +53,16 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         return $resource?->toDomain();
     }
 
-    public function save(ScheduledRun $run): void
+    public function save(object $run): void
     {
+        if (!$run instanceof ScheduledRun) {
+            throw new \InvalidArgumentException(sprintf(
+                'Expected %s, got %s.',
+                ScheduledRun::class,
+                $run::class,
+            ));
+        }
+
         $resource = SchedulerRunResource::fromDomain($run);
         parent::save($resource);
         $run->id = $resource->id;
