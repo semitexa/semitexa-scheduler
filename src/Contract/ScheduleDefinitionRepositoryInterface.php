@@ -13,7 +13,7 @@ interface ScheduleDefinitionRepositoryInterface
     /** @return list<ScheduleDefinition> */
     public function findAllEnabled(): array;
 
-    public function save(ScheduleDefinition $definition): void;
+    public function save(ScheduleDefinition $entity): void;
 
     public function advancePlanningCursor(string $scheduleKey, \DateTimeImmutable $cursor): void;
 }

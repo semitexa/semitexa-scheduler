@@ -42,7 +42,7 @@ class ScheduleDefinitionRepository extends AbstractRepository implements Schedul
         return array_map(fn($r) => $r->toDomain(), $resources);
     }
 
-    public function save(ScheduleDefinition $definition): void
+    public function save(object $definition): void
     {
         $resource = SchedulerScheduleDefinitionResource::fromDomain($definition);
         parent::save($resource);
