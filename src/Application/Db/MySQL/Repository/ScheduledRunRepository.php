@@ -30,7 +30,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
     public function findById(int|string $id): ?ScheduledRun
     {
         if (!is_string($id)) {
-            return null;
+            throw new \InvalidArgumentException('ScheduledRunRepository::findById expects a string UUID id.');
         }
 
         $binId = Uuid7::toBytes($id);

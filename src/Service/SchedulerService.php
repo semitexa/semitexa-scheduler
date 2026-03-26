@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Service;
 
 use Semitexa\Core\Attributes\SatisfiesServiceContract;
-use Semitexa\Core\Attributes\InjectAsReadonly;
 use Semitexa\Scheduler\Contract\SchedulerInterface;
 
 #[SatisfiesServiceContract(of: SchedulerInterface::class)]
 final class SchedulerService implements SchedulerInterface
 {
-    #[InjectAsReadonly]
-    protected ?DelayedRunFactory $factory = null;
+    public function __construct(
+        private readonly DelayedRunFactory $factory,
+    ) {}
 
     public function dispatchAt(
         string $jobClass,
@@ -24,10 +24,6 @@ final class SchedulerService implements SchedulerInterface
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
     ): string {
-        if ($this->factory === null) {
-            throw new \RuntimeException('DelayedRunFactory is not available.');
-        }
-
         return $this->factory->create(
             jobClass: $jobClass,
             scheduledFor: $runAt,
@@ -51,10 +47,6 @@ final class SchedulerService implements SchedulerInterface
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
     ): string {
-        if ($this->factory === null) {
-            throw new \RuntimeException('DelayedRunFactory is not available.');
-        }
-
         $runAt = (new \DateTimeImmutable())->add($delay);
         return $this->dispatchAt($jobClass, $runAt, $payload, $pool, $tenantId, $lockKey, $maxAttempts, $retryBackoffSeconds);
     }
