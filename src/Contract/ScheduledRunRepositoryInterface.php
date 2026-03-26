@@ -12,7 +12,7 @@ interface ScheduledRunRepositoryInterface
 
     public function findByOccurrenceKey(string $occurrenceKey): ?ScheduledRun;
 
-    public function save(ScheduledRun $run): void;
+    public function save(object $entity): void;
 
     /**
      * Atomically claim one run for the given worker and pool.

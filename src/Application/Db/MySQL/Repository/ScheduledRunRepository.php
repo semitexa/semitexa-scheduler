@@ -27,7 +27,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         return SchedulerRunResource::class;
     }
 
-    public function findById(string $id): ?ScheduledRun
+    public function findById(int|string $id): ?ScheduledRun
     {
         $binId = Uuid7::toBytes($id);
         $result = $this->db->execute(
@@ -49,7 +49,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         return $resource?->toDomain();
     }
 
-    public function save(ScheduledRun $run): void
+    public function save(object $run): void
     {
         $resource = SchedulerRunResource::fromDomain($run);
         parent::save($resource);
