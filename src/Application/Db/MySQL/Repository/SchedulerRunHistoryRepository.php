@@ -4,20 +4,12 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 
-use Semitexa\Orm\Adapter\DatabaseAdapterInterface;
 use Semitexa\Orm\Repository\AbstractRepository;
 use Semitexa\Orm\Uuid\Uuid7;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
 
 class SchedulerRunHistoryRepository extends AbstractRepository
 {
-    public function __construct(
-        private readonly DatabaseAdapterInterface $db,
-        ?\Semitexa\Orm\Hydration\StreamingHydrator $hydrator = null,
-    ) {
-        parent::__construct($db, $hydrator);
-    }
-
     protected function getResourceClass(): string
     {
         return SchedulerRunHistoryResource::class;

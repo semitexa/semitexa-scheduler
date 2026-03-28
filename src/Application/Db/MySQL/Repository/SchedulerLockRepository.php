@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 
 use Semitexa\Core\Attributes\SatisfiesRepositoryContract;
-use Semitexa\Orm\Adapter\DatabaseAdapterInterface;
 use Semitexa\Orm\Repository\AbstractRepository;
 use Semitexa\Orm\Uuid\Uuid7;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerLockResource;
@@ -15,13 +14,6 @@ use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 #[SatisfiesRepositoryContract(of: SchedulerLockRepositoryInterface::class)]
 class SchedulerLockRepository extends AbstractRepository implements SchedulerLockRepositoryInterface
 {
-    public function __construct(
-        private readonly DatabaseAdapterInterface $db,
-        ?\Semitexa\Orm\Hydration\StreamingHydrator $hydrator = null,
-    ) {
-        parent::__construct($db, $hydrator);
-    }
-
     protected function getResourceClass(): string
     {
         return SchedulerLockResource::class;
@@ -37,7 +29,7 @@ class SchedulerLockRepository extends AbstractRepository implements SchedulerLoc
 
         // Try to INSERT a fresh lock row (unique key on lock_key)
         try {
-            $result = $this->db->execute(
+            $result = $this->getAdapter()->execute(
                 "INSERT INTO scheduler_locks (id, lock_key, run_id, worker_id, acquired_at, expires_at, created_at, updated_at)
                  VALUES (:id, :lock_key, :run_id, :worker_id, :now, :expires, :now, :now)",
                 [
@@ -55,7 +47,7 @@ class SchedulerLockRepository extends AbstractRepository implements SchedulerLoc
         }
 
         // Replace expired lock
-        $replaced = $this->db->execute(
+        $replaced = $this->getAdapter()->execute(
             "UPDATE scheduler_locks
              SET run_id = :run_id, worker_id = :worker_id, acquired_at = :now, expires_at = :expires, updated_at = :now
              WHERE lock_key = :lock_key AND expires_at < :now",
@@ -76,7 +68,7 @@ class SchedulerLockRepository extends AbstractRepository implements SchedulerLoc
         $expires = $now->modify("+{$ttlSeconds} seconds")->format('Y-m-d H:i:s.u');
         $nowStr  = $now->format('Y-m-d H:i:s.u');
 
-        $result = $this->db->execute(
+        $result = $this->getAdapter()->execute(
             "UPDATE scheduler_locks SET expires_at = :expires, updated_at = :now
              WHERE lock_key = :lock_key AND worker_id = :worker_id",
             ['expires' => $expires, 'now' => $nowStr, 'lock_key' => $lockKey, 'worker_id' => $workerId],
@@ -86,7 +78,7 @@ class SchedulerLockRepository extends AbstractRepository implements SchedulerLoc
 
     public function release(string $lockKey, string $workerId): void
     {
-        $this->db->execute(
+        $this->getAdapter()->execute(
             "DELETE FROM scheduler_locks WHERE lock_key = :lock_key AND worker_id = :worker_id",
             ['lock_key' => $lockKey, 'worker_id' => $workerId],
         );
@@ -94,7 +86,7 @@ class SchedulerLockRepository extends AbstractRepository implements SchedulerLoc
 
     public function findByKey(string $lockKey): ?SchedulerLock
     {
-        $result = $this->db->execute(
+        $result = $this->getAdapter()->execute(
             "SELECT * FROM scheduler_locks WHERE lock_key = :key LIMIT 1",
             ['key' => $lockKey],
         );
@@ -116,7 +108,7 @@ class SchedulerLockRepository extends AbstractRepository implements SchedulerLoc
 
     public function deleteExpired(\DateTimeImmutable $now): int
     {
-        $result = $this->db->execute(
+        $result = $this->getAdapter()->execute(
             "DELETE FROM scheduler_locks WHERE expires_at < :now",
             ['now' => $now->format('Y-m-d H:i:s.u')],
         );

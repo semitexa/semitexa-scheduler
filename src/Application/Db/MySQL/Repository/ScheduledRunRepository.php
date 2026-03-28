@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 
 use Semitexa\Core\Attributes\SatisfiesRepositoryContract;
-use Semitexa\Orm\Adapter\DatabaseAdapterInterface;
 use Semitexa\Orm\Repository\AbstractRepository;
 use Semitexa\Orm\Uuid\Uuid7;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
@@ -15,13 +14,6 @@ use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 #[SatisfiesRepositoryContract(of: ScheduledRunRepositoryInterface::class)]
 class ScheduledRunRepository extends AbstractRepository implements ScheduledRunRepositoryInterface
 {
-    public function __construct(
-        private readonly DatabaseAdapterInterface $db,
-        ?\Semitexa\Orm\Hydration\StreamingHydrator $hydrator = null,
-    ) {
-        parent::__construct($db, $hydrator);
-    }
-
     protected function getResourceClass(): string
     {
         return SchedulerRunResource::class;
@@ -34,7 +26,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         }
 
         $binId = Uuid7::toBytes($id);
-        $result = $this->db->execute(
+        $result = $this->getAdapter()->execute(
             'SELECT * FROM scheduler_runs WHERE id = :id LIMIT 1',
             ['id' => $binId],
         );
@@ -75,7 +67,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         $leaseUntil = $now->modify("+{$leaseTtlSeconds} seconds")->format('Y-m-d H:i:s.u');
 
         // Step 1: find a candidate
-        $result = $this->db->execute(
+        $result = $this->getAdapter()->execute(
             "SELECT id FROM scheduler_runs
              WHERE pool = :pool
                AND status IN ('pending', 'retry_scheduled')
@@ -94,7 +86,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         $candidateId = $row['id'];
 
         // Step 2: atomic claim
-        $claimed = $this->db->execute(
+        $claimed = $this->getAdapter()->execute(
             "UPDATE scheduler_runs
              SET status = 'claimed',
                  lease_owner = :worker,
@@ -126,7 +118,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
         $nowStr     = $now->format('Y-m-d H:i:s.u');
         $binId      = Uuid7::toBytes($runId);
 
-        $result = $this->db->execute(
+        $result = $this->getAdapter()->execute(
             "UPDATE scheduler_runs
              SET lease_expires_at = :lease_until,
                  last_heartbeat_at = :now,
@@ -146,7 +138,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
         $nowStr = $now->format('Y-m-d H:i:s.u');
-        $result = $this->db->execute(
+        $result = $this->getAdapter()->execute(
             "UPDATE scheduler_runs
              SET status = 'pending',
                  lease_owner = NULL,
