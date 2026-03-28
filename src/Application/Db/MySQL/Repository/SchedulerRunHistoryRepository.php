@@ -4,16 +4,18 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 
-use Semitexa\Orm\Repository\AbstractRepository;
-use Semitexa\Orm\Uuid\Uuid7;
+use Semitexa\Core\Attributes\InjectAsReadonly;
+use Semitexa\Orm\OrmManager;
+use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryTableModel;
 
-class SchedulerRunHistoryRepository extends AbstractRepository
+final class SchedulerRunHistoryRepository
 {
-    protected function getResourceClass(): string
-    {
-        return SchedulerRunHistoryResource::class;
-    }
+    #[InjectAsReadonly]
+    protected ?OrmManager $orm = null;
+
+    private ?DomainRepository $repository = null;
 
     public function append(
         string $runId,
@@ -24,14 +26,38 @@ class SchedulerRunHistoryRepository extends AbstractRepository
         ?string $message = null,
         ?array $context = null,
     ): void {
-        $h = new SchedulerRunHistoryResource();
-        $h->run_id       = Uuid7::toBytes($runId);
-        $h->event_type   = $eventType;
-        $h->from_status  = $fromStatus;
-        $h->to_status    = $toStatus;
-        $h->worker_id    = $workerId;
-        $h->message      = $message;
-        $h->context_json = $context !== null ? json_encode($context, JSON_THROW_ON_ERROR) : null;
-        parent::save($h);
+        $resource = new SchedulerRunHistoryResource();
+        $resource->run_id = \Semitexa\Orm\Uuid\Uuid7::toBytes($runId);
+        $resource->event_type = $eventType;
+        $resource->from_status = $fromStatus;
+        $resource->to_status = $toStatus;
+        $resource->worker_id = $workerId;
+        $resource->message = $message;
+        $resource->context_json = $context !== null ? json_encode($context, JSON_THROW_ON_ERROR) : null;
+
+        $persisted = $this->repository()->insert($resource);
+        $this->copyIntoMutableResource($persisted, $resource);
+    }
+
+    private function repository(): DomainRepository
+    {
+        return $this->repository ??= $this->orm()->repository(
+            SchedulerRunHistoryTableModel::class,
+            SchedulerRunHistoryResource::class,
+        );
+    }
+
+    private function orm(): OrmManager
+    {
+        return $this->orm ??= new OrmManager();
+    }
+
+    private function copyIntoMutableResource(object $source, SchedulerRunHistoryResource $target): void
+    {
+        $source instanceof SchedulerRunHistoryResource || throw new \InvalidArgumentException('Unexpected persisted resource.');
+
+        foreach (get_object_vars($source) as $property => $value) {
+            $target->{$property} = $value;
+        }
     }
 }
