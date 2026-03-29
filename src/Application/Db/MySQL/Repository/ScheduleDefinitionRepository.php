@@ -4,69 +4,81 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 
+use Semitexa\Core\Attributes\InjectAsReadonly;
 use Semitexa\Core\Attributes\SatisfiesRepositoryContract;
-use Semitexa\Orm\Adapter\DatabaseAdapterInterface;
-use Semitexa\Orm\Repository\AbstractRepository;
-use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerScheduleDefinitionResource;
+use Semitexa\Orm\OrmManager;
+use Semitexa\Orm\Query\Direction;
+use Semitexa\Orm\Query\Operator;
+use Semitexa\Orm\Repository\DomainRepository;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\ScheduleDefinitionTableModel;
 use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 
 #[SatisfiesRepositoryContract(of: ScheduleDefinitionRepositoryInterface::class)]
-class ScheduleDefinitionRepository extends AbstractRepository implements ScheduleDefinitionRepositoryInterface
+final class ScheduleDefinitionRepository implements ScheduleDefinitionRepositoryInterface
 {
-    public function __construct(
-        private readonly DatabaseAdapterInterface $db,
-        ?\Semitexa\Orm\Hydration\StreamingHydrator $hydrator = null,
-    ) {
-        parent::__construct($db, $hydrator);
-    }
+    #[InjectAsReadonly]
+    protected ?OrmManager $orm = null;
 
-    protected function getResourceClass(): string
-    {
-        return SchedulerScheduleDefinitionResource::class;
-    }
+    private ?DomainRepository $repository = null;
 
     public function findByKey(string $scheduleKey): ?ScheduleDefinition
     {
-        $resource = $this->select()
-            ->where('schedule_key', '=', $scheduleKey)
-            ->fetchOneAsResource();
-        return $resource?->toDomain();
+        /** @var ScheduleDefinition|null */
+        return $this->repository()->query()
+            ->where(ScheduleDefinitionTableModel::column('scheduleKey'), Operator::Equals, $scheduleKey)
+            ->fetchOneAs(ScheduleDefinition::class, $this->orm()->getMapperRegistry());
     }
 
     public function findAllEnabled(): array
     {
-        $resources = $this->select()
-            ->where('enabled', '=', 1)
-            ->fetchAllAsResource();
-        return array_map(fn($r) => $r->toDomain(), $resources);
+        /** @var list<ScheduleDefinition> */
+        return $this->repository()->query()
+            ->where(ScheduleDefinitionTableModel::column('enabled'), Operator::Equals, true)
+            ->orderBy(ScheduleDefinitionTableModel::column('scheduleKey'), Direction::Asc)
+            ->fetchAllAs(ScheduleDefinition::class, $this->orm()->getMapperRegistry());
     }
 
-    public function save(object $definition): void
+    public function save(ScheduleDefinition $entity): void
     {
-        if (!$definition instanceof ScheduleDefinition) {
-            throw new \InvalidArgumentException(sprintf(
-                'Expected %s, got %s.',
-                ScheduleDefinition::class,
-                $definition::class,
-            ));
-        }
+        $persisted = $entity->id === ''
+            ? $this->repository()->insert($entity)
+            : $this->repository()->update($entity);
 
-        $resource = SchedulerScheduleDefinitionResource::fromDomain($definition);
-        parent::save($resource);
-        $definition->id = $resource->id;
+        $this->copyIntoMutableDomain($persisted, $entity);
     }
 
     public function advancePlanningCursor(string $scheduleKey, \DateTimeImmutable $cursor): void
     {
-        $resource = $this->select()
-            ->where('schedule_key', '=', $scheduleKey)
-            ->fetchOneAsResource();
-        if ($resource === null) {
+        $definition = $this->findByKey($scheduleKey);
+        if ($definition === null) {
             return;
         }
-        $resource->planning_cursor_at = $cursor;
-        $resource->last_planned_at = new \DateTimeImmutable();
-        parent::save($resource);
+
+        $definition->planningCursorAt = $cursor;
+        $definition->lastPlannedAt = new \DateTimeImmutable();
+        $this->repository()->update($definition);
+    }
+
+    private function repository(): DomainRepository
+    {
+        return $this->repository ??= $this->orm()->repository(
+            ScheduleDefinitionTableModel::class,
+            ScheduleDefinition::class,
+        );
+    }
+
+    private function orm(): OrmManager
+    {
+        return $this->orm ??= new OrmManager();
+    }
+
+    private function copyIntoMutableDomain(object $source, ScheduleDefinition $target): void
+    {
+        $source instanceof ScheduleDefinition || throw new \InvalidArgumentException('Unexpected persisted domain model.');
+
+        foreach (get_object_vars($source) as $property => $value) {
+            $target->{$property} = $value;
+        }
     }
 }

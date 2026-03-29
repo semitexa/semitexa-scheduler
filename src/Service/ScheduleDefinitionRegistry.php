@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Service;
 
 use Semitexa\Core\Attributes\AsService;
+use Semitexa\Core\Attributes\InjectAsReadonly;
 use Semitexa\Core\Discovery\ClassDiscovery;
 use Semitexa\Scheduler\Attribute\AsScheduledJob;
 use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
@@ -13,9 +14,15 @@ use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 #[AsService]
 final class ScheduleDefinitionRegistry
 {
-    public function __construct(
-        private readonly ScheduleDefinitionRepositoryInterface $repository,
-    ) {}
+    #[InjectAsReadonly]
+    protected ScheduleDefinitionRepositoryInterface $repository;
+
+    public function __construct(?ScheduleDefinitionRepositoryInterface $repository = null)
+    {
+        if ($repository !== null) {
+            $this->repository = $repository;
+        }
+    }
 
     /**
      * Discover all classes tagged with #[AsScheduledJob] and upsert them into the DB.

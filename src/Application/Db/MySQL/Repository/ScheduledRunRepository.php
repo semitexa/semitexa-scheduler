@@ -4,78 +4,54 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 
+use Semitexa\Core\Attributes\InjectAsReadonly;
 use Semitexa\Core\Attributes\SatisfiesRepositoryContract;
-use Semitexa\Orm\Adapter\DatabaseAdapterInterface;
-use Semitexa\Orm\Repository\AbstractRepository;
+use Semitexa\Orm\OrmManager;
+use Semitexa\Orm\Query\Operator;
+use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Uuid\Uuid7;
-use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\ScheduledRunTableModel;
 use Semitexa\Scheduler\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
 #[SatisfiesRepositoryContract(of: ScheduledRunRepositoryInterface::class)]
-class ScheduledRunRepository extends AbstractRepository implements ScheduledRunRepositoryInterface
+final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
 {
-    public function __construct(
-        private readonly DatabaseAdapterInterface $db,
-        ?\Semitexa\Orm\Hydration\StreamingHydrator $hydrator = null,
-    ) {
-        parent::__construct($db, $hydrator);
-    }
+    #[InjectAsReadonly]
+    protected ?OrmManager $orm = null;
 
-    protected function getResourceClass(): string
+    private ?DomainRepository $repository = null;
+
+    public function findById(string $id): ?ScheduledRun
     {
-        return SchedulerRunResource::class;
-    }
-
-    public function findById(int|string $id): ?ScheduledRun
-    {
-        if (!is_string($id)) {
-            throw new \InvalidArgumentException('ScheduledRunRepository::findById expects a string UUID id.');
-        }
-
-        $binId = Uuid7::toBytes($id);
-        $result = $this->db->execute(
-            'SELECT * FROM scheduler_runs WHERE id = :id LIMIT 1',
-            ['id' => $binId],
-        );
-        $row = $result->rows[0] ?? null;
-        if ($row === null) {
-            return null;
-        }
-        return $this->hydrate($row);
+        /** @var ScheduledRun|null */
+        return $this->repository()->findById($id);
     }
 
     public function findByOccurrenceKey(string $occurrenceKey): ?ScheduledRun
     {
-        $resource = $this->select()
-            ->where('occurrence_key', '=', $occurrenceKey)
-            ->fetchOneAsResource();
-        return $resource?->toDomain();
+        /** @var ScheduledRun|null */
+        return $this->repository()->query()
+            ->where(ScheduledRunTableModel::column('occurrenceKey'), Operator::Equals, $occurrenceKey)
+            ->fetchOneAs(ScheduledRun::class, $this->orm()->getMapperRegistry());
     }
 
-    public function save(object $run): void
+    public function save(ScheduledRun $entity): void
     {
-        if (!$run instanceof ScheduledRun) {
-            throw new \InvalidArgumentException(sprintf(
-                'Expected %s, got %s.',
-                ScheduledRun::class,
-                $run::class,
-            ));
-        }
+        $persisted = $entity->id === ''
+            ? $this->repository()->insert($entity)
+            : $this->repository()->update($entity);
 
-        $resource = SchedulerRunResource::fromDomain($run);
-        parent::save($resource);
-        $run->id = $resource->id;
+        $this->copyIntoMutableDomain($persisted, $entity);
     }
 
     public function claimNextDue(string $pool, string $workerId, int $leaseTtlSeconds): ?string
     {
-        $now        = new \DateTimeImmutable();
-        $nowStr     = $now->format('Y-m-d H:i:s.u');
+        $now = new \DateTimeImmutable();
+        $nowStr = $now->format('Y-m-d H:i:s.u');
         $leaseUntil = $now->modify("+{$leaseTtlSeconds} seconds")->format('Y-m-d H:i:s.u');
 
-        // Step 1: find a candidate
-        $result = $this->db->execute(
+        $result = $this->adapter()->execute(
             "SELECT id FROM scheduler_runs
              WHERE pool = :pool
                AND status IN ('pending', 'retry_scheduled')
@@ -93,8 +69,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
 
         $candidateId = $row['id'];
 
-        // Step 2: atomic claim
-        $claimed = $this->db->execute(
+        $claimed = $this->adapter()->execute(
             "UPDATE scheduler_runs
              SET status = 'claimed',
                  lease_owner = :worker,
@@ -105,15 +80,15 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
                AND available_at <= :now
                AND (lease_expires_at IS NULL OR lease_expires_at < :now)",
             [
-                'worker'      => $workerId,
+                'worker' => $workerId,
                 'lease_until' => $leaseUntil,
-                'now'         => $nowStr,
-                'id'          => $candidateId,
+                'now' => $nowStr,
+                'id' => $candidateId,
             ],
         );
 
         if ($claimed->rowCount === 0) {
-            return null; // Another worker claimed it first
+            return null;
         }
 
         return Uuid7::fromBytes($candidateId);
@@ -121,12 +96,12 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
 
     public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool
     {
-        $now        = new \DateTimeImmutable();
+        $now = new \DateTimeImmutable();
         $leaseUntil = $now->modify("+{$leaseTtlSeconds} seconds")->format('Y-m-d H:i:s.u');
-        $nowStr     = $now->format('Y-m-d H:i:s.u');
-        $binId      = Uuid7::toBytes($runId);
+        $nowStr = $now->format('Y-m-d H:i:s.u');
+        $binId = Uuid7::toBytes($runId);
 
-        $result = $this->db->execute(
+        $result = $this->adapter()->execute(
             "UPDATE scheduler_runs
              SET lease_expires_at = :lease_until,
                  last_heartbeat_at = :now,
@@ -134,9 +109,9 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
              WHERE id = :id AND lease_owner = :worker",
             [
                 'lease_until' => $leaseUntil,
-                'now'         => $nowStr,
-                'id'          => $binId,
-                'worker'      => $workerId,
+                'now' => $nowStr,
+                'id' => $binId,
+                'worker' => $workerId,
             ],
         );
 
@@ -146,7 +121,7 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
         $nowStr = $now->format('Y-m-d H:i:s.u');
-        $result = $this->db->execute(
+        $result = $this->adapter()->execute(
             "UPDATE scheduler_runs
              SET status = 'pending',
                  lease_owner = NULL,
@@ -157,46 +132,34 @@ class ScheduledRunRepository extends AbstractRepository implements ScheduledRunR
                AND lease_expires_at < :now",
             ['now' => $nowStr],
         );
+
         return $result->rowCount;
     }
 
-    private function hydrate(array $row): ScheduledRun
+    private function repository(): DomainRepository
     {
-        $run = new ScheduledRun();
-        $run->id                  = isset($row['id']) ? Uuid7::fromBytes($row['id']) : '';
-        $run->sourceType          = $row['source_type'] ?? 'delayed';
-        $run->scheduleDefinitionId = isset($row['schedule_definition_id']) ? Uuid7::fromBytes($row['schedule_definition_id']) : null;
-        $run->scheduleKey         = $row['schedule_key'] ?? null;
-        $run->occurrenceKey       = $row['occurrence_key'] ?? null;
-        $run->jobClass            = $row['job_class'] ?? '';
-        $run->tenantId            = $row['tenant_id'] ?? null;
-        $run->pool                = $row['pool'] ?? 'default';
-        $run->lockKey             = $row['lock_key'] ?? null;
-        $run->status              = $row['status'] ?? 'pending';
-        $run->scheduledFor        = $this->toDatetime($row['scheduled_for'] ?? null);
-        $run->availableAt         = $this->toDatetime($row['available_at'] ?? null);
-        $run->misfiredAt          = $this->toDatetime($row['misfired_at'] ?? null);
-        $run->attemptCount        = (int) ($row['attempt_count'] ?? 0);
-        $run->maxAttempts         = (int) ($row['max_attempts'] ?? 1);
-        $run->retryBackoffSeconds = (int) ($row['retry_backoff_seconds'] ?? 0);
-        $run->leaseOwner          = $row['lease_owner'] ?? null;
-        $run->leaseExpiresAt      = $this->toDatetime($row['lease_expires_at'] ?? null);
-        $run->lockedAt            = $this->toDatetime($row['locked_at'] ?? null);
-        $run->startedAt           = $this->toDatetime($row['started_at'] ?? null);
-        $run->finishedAt          = $this->toDatetime($row['finished_at'] ?? null);
-        $run->lastHeartbeatAt     = $this->toDatetime($row['last_heartbeat_at'] ?? null);
-        $run->lastError           = $row['last_error'] ?? null;
-        $run->payloadJson         = $row['payload_json'] ?? null;
-        $run->createdAt           = $this->toDatetime($row['created_at'] ?? null);
-        $run->updatedAt           = $this->toDatetime($row['updated_at'] ?? null);
-        return $run;
+        return $this->repository ??= $this->orm()->repository(
+            ScheduledRunTableModel::class,
+            ScheduledRun::class,
+        );
     }
 
-    private function toDatetime(?string $value): ?\DateTimeImmutable
+    private function orm(): OrmManager
     {
-        if ($value === null || $value === '') {
-            return null;
+        return $this->orm ??= new OrmManager();
+    }
+
+    private function adapter(): \Semitexa\Orm\Adapter\DatabaseAdapterInterface
+    {
+        return $this->orm()->getAdapter();
+    }
+
+    private function copyIntoMutableDomain(object $source, ScheduledRun $target): void
+    {
+        $source instanceof ScheduledRun || throw new \InvalidArgumentException('Unexpected persisted domain model.');
+
+        foreach (get_object_vars($source) as $property => $value) {
+            $target->{$property} = $value;
         }
-        return new \DateTimeImmutable($value);
     }
 }
