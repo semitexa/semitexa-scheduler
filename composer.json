@@ -27,7 +27,7 @@
             "description": "Recurring and delayed background jobs: cron schedules, one-off delayed jobs, lease workers, overlap protection"
         }
     },
-    "version": "0.0.1",
+    "version": "v0.0.3",
     "keywords": [
         "semitexa",
         "scheduler",
