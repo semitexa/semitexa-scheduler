@@ -1,4 +1,4 @@
-# semitexa/scheduler
+# Semitexa Scheduler
 
 Recurring and delayed background jobs with lease-based workers, retry logic, and overlap protection.
 
