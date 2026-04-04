@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Console;
 
-use Semitexa\Core\Attributes\AsCommand;
+use Semitexa\Core\Attribute\AsCommand;
 use Semitexa\Core\Container\ContainerFactory;
 use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Planner\CronOccurrenceCalculator;

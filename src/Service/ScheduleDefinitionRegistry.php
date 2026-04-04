@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Service;
 
-use Semitexa\Core\Attributes\AsService;
-use Semitexa\Core\Attributes\InjectAsReadonly;
+use Semitexa\Core\Attribute\AsService;
+use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Core\Discovery\ClassDiscovery;
 use Semitexa\Scheduler\Attribute\AsScheduledJob;
 use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
@@ -17,12 +17,15 @@ final class ScheduleDefinitionRegistry
     #[InjectAsReadonly]
     protected ScheduleDefinitionRepositoryInterface $repository;
 
+    #[InjectAsReadonly]
+    protected ClassDiscovery $classDiscovery;
+
     /**
      * Discover all classes tagged with #[AsScheduledJob] and upsert them into the DB.
      */
     public function sync(): void
     {
-        $classes = ClassDiscovery::findClassesWithAttribute(AsScheduledJob::class);
+        $classes = $this->classDiscovery->findClassesWithAttribute(AsScheduledJob::class);
 
         foreach ($classes as $class) {
             $reflection = new \ReflectionClass($class);

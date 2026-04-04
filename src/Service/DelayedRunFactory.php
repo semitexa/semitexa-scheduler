@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Service;
 
-use Semitexa\Core\Attributes\AsService;
+use Semitexa\Core\Attribute\AsService;
 use Semitexa\Scheduler\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Enum\RunStatus;
@@ -13,7 +13,7 @@ use Semitexa\Scheduler\Enum\SourceType;
 #[AsService]
 final class DelayedRunFactory
 {
-    #[\Semitexa\Core\Attributes\InjectAsReadonly]
+    #[\Semitexa\Core\Attribute\InjectAsReadonly]
     protected ?ScheduledRunRepositoryInterface $runRepository = null;
 
     public function create(

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 
-use Semitexa\Core\Attributes\InjectAsReadonly;
+use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
