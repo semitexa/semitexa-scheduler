@@ -20,14 +20,6 @@ final class ScheduleDefinitionRegistry
     #[InjectAsReadonly]
     protected ?ClassDiscovery $classDiscovery = null;
 
-    public function __construct(
-        ?ScheduleDefinitionRepositoryInterface $repository = null,
-        ?ClassDiscovery $classDiscovery = null,
-    ) {
-        $this->repository = $repository;
-        $this->classDiscovery = $classDiscovery;
-    }
-
     /**
      * Discover all classes tagged with #[AsScheduledJob] and upsert them into the DB.
      */
