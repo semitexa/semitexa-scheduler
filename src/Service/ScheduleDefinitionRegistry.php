@@ -20,12 +20,9 @@ final class ScheduleDefinitionRegistry
     #[InjectAsReadonly]
     protected ?ClassDiscovery $classDiscovery = null;
 
-    public function __construct(
-        ?ScheduleDefinitionRepositoryInterface $repository = null,
-        ?ClassDiscovery $classDiscovery = null,
-    ) {
+    public function __construct(?ScheduleDefinitionRepositoryInterface $repository = null)
+    {
         $this->repository = $repository;
-        $this->classDiscovery = $classDiscovery;
     }
 
     /**
