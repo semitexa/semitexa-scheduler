@@ -40,7 +40,7 @@ final class SchedulerPlanCommand extends Command
             $tenantRepo     = $container->get(TenantRepositoryInterface::class);
 
             // Sync code-discovered schedules to DB
-            $registry = new ScheduleDefinitionRegistry($definitionRepo);
+            $registry = $container->get(ScheduleDefinitionRegistry::class);
             $registry->sync();
 
             $planner = new SchedulePlanner(
