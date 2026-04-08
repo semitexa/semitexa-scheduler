@@ -51,7 +51,7 @@ final class SchedulerWorkCommand extends Command
             $runRepo        = $container->get(ScheduledRunRepositoryInterface::class);
             $lockRepo       = $container->get(SchedulerLockRepositoryInterface::class);
             $definitionRepo = $container->get(ScheduleDefinitionRepositoryInterface::class);
-            $historyRepo    = $container->get(SchedulerRunHistoryRepository::class);
+            $historyRepo    = new SchedulerRunHistoryRepository();
 
             $leaseManager   = new RunLeaseManager($runRepo, $config->leaseTtlSeconds);
             $lockManager    = new SchedulerLockManager($lockRepo, $config->lockTtlSeconds);

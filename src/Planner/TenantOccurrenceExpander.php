@@ -11,7 +11,7 @@ use Semitexa\Tenancy\Identification\TenantRepositoryInterface;
 final class TenantOccurrenceExpander
 {
     public function __construct(
-        private readonly TenantRepositoryInterface $tenantRepository,
+        private readonly ?TenantRepositoryInterface $tenantRepository = null,
     ) {}
 
     /**
@@ -22,6 +22,10 @@ final class TenantOccurrenceExpander
     public function expand(ScheduledOccurrence $occurrence, TenantScheduleMode $mode): array
     {
         if ($mode !== TenantScheduleMode::PerTenant) {
+            return [$occurrence];
+        }
+
+        if ($this->tenantRepository === null) {
             return [$occurrence];
         }
 
