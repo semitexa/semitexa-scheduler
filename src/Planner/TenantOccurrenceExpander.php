@@ -11,7 +11,7 @@ use Semitexa\Tenancy\Identification\TenantRepositoryInterface;
 final class TenantOccurrenceExpander
 {
     public function __construct(
-        private readonly TenantRepositoryInterface $tenantRepository,
+        private readonly ?TenantRepositoryInterface $tenantRepository = null,
     ) {}
 
     /**
@@ -25,9 +25,13 @@ final class TenantOccurrenceExpander
             return [$occurrence];
         }
 
+        if ($this->tenantRepository === null) {
+            return [];
+        }
+
         $tenants = $this->tenantRepository->findAll();
         if ($tenants === []) {
-            return [$occurrence];
+            return [];
         }
 
         $expanded = [];

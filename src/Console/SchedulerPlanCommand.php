@@ -37,7 +37,21 @@ final class SchedulerPlanCommand extends Command
             $container      = ContainerFactory::get();
             $definitionRepo = $container->get(ScheduleDefinitionRepositoryInterface::class);
             $runRepo        = $container->get(ScheduledRunRepositoryInterface::class);
-            $tenantRepo     = $container->get(TenantRepositoryInterface::class);
+            $tenantRepo     = null;
+            if (interface_exists(TenantRepositoryInterface::class)) {
+                try {
+                    $tenantRepo = $container->get(TenantRepositoryInterface::class);
+                } catch (\Throwable $e) {
+                    $io->warning(
+                        'Tenant repository could not be resolved; continuing without tenant expansion. '
+                        . 'Please check container configuration for '
+                        . TenantRepositoryInterface::class
+                        . '. Error: '
+                        . $e->getMessage()
+                    );
+                    $tenantRepo = null;
+                }
+            }
 
             // Sync code-discovered schedules to DB
             $registry = $container->get(ScheduleDefinitionRegistry::class);
