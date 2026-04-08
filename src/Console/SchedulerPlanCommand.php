@@ -41,7 +41,14 @@ final class SchedulerPlanCommand extends Command
             if (interface_exists(TenantRepositoryInterface::class)) {
                 try {
                     $tenantRepo = $container->get(TenantRepositoryInterface::class);
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
+                    $io->warning(
+                        'Tenant repository could not be resolved; continuing without tenant expansion. '
+                        . 'Please check container configuration for '
+                        . TenantRepositoryInterface::class
+                        . '. Error: '
+                        . $e->getMessage()
+                    );
                     $tenantRepo = null;
                 }
             }

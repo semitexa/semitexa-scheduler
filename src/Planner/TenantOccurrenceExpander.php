@@ -26,12 +26,12 @@ final class TenantOccurrenceExpander
         }
 
         if ($this->tenantRepository === null) {
-            return [$occurrence];
+            return [];
         }
 
         $tenants = $this->tenantRepository->findAll();
         if ($tenants === []) {
-            return [$occurrence];
+            return [];
         }
 
         $expanded = [];
