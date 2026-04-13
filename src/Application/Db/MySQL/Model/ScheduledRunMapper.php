@@ -8,7 +8,7 @@ use Semitexa\Orm\Attribute\AsMapper;
 use Semitexa\Orm\Contract\TableModelMapper;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
-#[AsMapper(tableModel: ScheduledRunTableModel::class, domainModel: ScheduledRun::class)]
+#[AsMapper(resourceModel: ScheduledRunTableModel::class, domainModel: ScheduledRun::class)]
 final class ScheduledRunMapper implements TableModelMapper
 {
     public function toDomain(object $tableModel): object

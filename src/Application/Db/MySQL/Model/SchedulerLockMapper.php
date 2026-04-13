@@ -8,7 +8,7 @@ use Semitexa\Orm\Attribute\AsMapper;
 use Semitexa\Orm\Contract\TableModelMapper;
 use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 
-#[AsMapper(tableModel: SchedulerLockTableModel::class, domainModel: SchedulerLock::class)]
+#[AsMapper(resourceModel: SchedulerLockTableModel::class, domainModel: SchedulerLock::class)]
 final class SchedulerLockMapper implements TableModelMapper
 {
     public function toDomain(object $tableModel): object
