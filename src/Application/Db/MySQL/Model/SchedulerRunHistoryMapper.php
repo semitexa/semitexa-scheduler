@@ -7,7 +7,7 @@ namespace Semitexa\Scheduler\Application\Db\MySQL\Model;
 use Semitexa\Orm\Attribute\AsMapper;
 use Semitexa\Orm\Contract\TableModelMapper;
 
-#[AsMapper(tableModel: SchedulerRunHistoryTableModel::class, domainModel: SchedulerRunHistoryResource::class)]
+#[AsMapper(resourceModel: SchedulerRunHistoryTableModel::class, domainModel: SchedulerRunHistoryResource::class)]
 final class SchedulerRunHistoryMapper implements TableModelMapper
 {
     public function toDomain(object $tableModel): object
