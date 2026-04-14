@@ -18,7 +18,7 @@ final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
 
     public function toSourceModel(object $domainModel): object
     {
-        $domainModel instanceof SchedulerRunHistoryResource || throw new \InvalidArgumentException('Unexpected resource model.');
+        $domainModel instanceof SchedulerRunHistoryResource || throw new \InvalidArgumentException('Unexpected domain model.');
         return clone $domainModel;
     }
 }

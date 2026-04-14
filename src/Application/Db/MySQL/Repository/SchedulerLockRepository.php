@@ -91,7 +91,7 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
     {
         /** @var SchedulerLock|null */
         return $this->repository()->query()
-            ->where(SchedulerLockResource::column('lockKey'), Operator::Equals, $lockKey)
+            ->where(SchedulerLockResource::column('lock_key'), Operator::Equals, $lockKey)
             ->fetchOneAs(SchedulerLock::class, $this->orm()->getMapperRegistry());
     }
 

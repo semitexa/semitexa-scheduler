@@ -26,7 +26,7 @@ final class ScheduleDefinitionRepository implements ScheduleDefinitionRepository
     {
         /** @var ScheduleDefinition|null */
         return $this->repository()->query()
-            ->where(SchedulerScheduleDefinitionResource::column('scheduleKey'), Operator::Equals, $scheduleKey)
+            ->where(SchedulerScheduleDefinitionResource::column('schedule_key'), Operator::Equals, $scheduleKey)
             ->fetchOneAs(ScheduleDefinition::class, $this->orm()->getMapperRegistry());
     }
 
@@ -35,7 +35,7 @@ final class ScheduleDefinitionRepository implements ScheduleDefinitionRepository
         /** @var list<ScheduleDefinition> */
         return $this->repository()->query()
             ->where(SchedulerScheduleDefinitionResource::column('enabled'), Operator::Equals, true)
-            ->orderBy(SchedulerScheduleDefinitionResource::column('scheduleKey'), Direction::Asc)
+            ->orderBy(SchedulerScheduleDefinitionResource::column('schedule_key'), Direction::Asc)
             ->fetchAllAs(ScheduleDefinition::class, $this->orm()->getMapperRegistry());
     }
 

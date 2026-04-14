@@ -32,7 +32,7 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
     {
         /** @var ScheduledRun|null */
         return $this->repository()->query()
-            ->where(SchedulerRunResource::column('occurrenceKey'), Operator::Equals, $occurrenceKey)
+            ->where(SchedulerRunResource::column('occurrence_key'), Operator::Equals, $occurrenceKey)
             ->fetchOneAs(ScheduledRun::class, $this->orm()->getMapperRegistry());
     }
 
