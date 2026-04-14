@@ -10,7 +10,7 @@ use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Uuid\Uuid7;
-use Semitexa\Scheduler\Application\Db\MySQL\Model\ScheduledRunTableModel;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
 use Semitexa\Scheduler\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
@@ -32,7 +32,7 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
     {
         /** @var ScheduledRun|null */
         return $this->repository()->query()
-            ->where(ScheduledRunTableModel::column('occurrenceKey'), Operator::Equals, $occurrenceKey)
+            ->where(SchedulerRunResource::column('occurrence_key'), Operator::Equals, $occurrenceKey)
             ->fetchOneAs(ScheduledRun::class, $this->orm()->getMapperRegistry());
     }
 
@@ -139,7 +139,7 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
     private function repository(): DomainRepository
     {
         return $this->repository ??= $this->orm()->repository(
-            ScheduledRunTableModel::class,
+            SchedulerRunResource::class,
             ScheduledRun::class,
         );
     }

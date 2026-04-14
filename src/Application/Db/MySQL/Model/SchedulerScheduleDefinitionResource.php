@@ -8,6 +8,8 @@ use Semitexa\Orm\Adapter\MySqlType;
 use Semitexa\Orm\Attribute\Column;
 use Semitexa\Orm\Attribute\FromTable;
 use Semitexa\Orm\Attribute\Index;
+use Semitexa\Orm\Metadata\HasColumnReferences;
+use Semitexa\Orm\Metadata\HasRelationReferences;
 use Semitexa\Orm\Trait\HasTimestamps;
 use Semitexa\Orm\Trait\HasUuidV7;
 
@@ -18,6 +20,8 @@ class SchedulerScheduleDefinitionResource
 {
     use HasUuidV7;
     use HasTimestamps;
+    use HasColumnReferences;
+    use HasRelationReferences;
 
     #[Column(type: MySqlType::Varchar, length: 191)]
     public string $schedule_key = '';

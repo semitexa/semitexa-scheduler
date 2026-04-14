@@ -10,7 +10,7 @@ use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Direction;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
-use Semitexa\Scheduler\Application\Db\MySQL\Model\ScheduleDefinitionTableModel;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerScheduleDefinitionResource;
 use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 
@@ -26,7 +26,7 @@ final class ScheduleDefinitionRepository implements ScheduleDefinitionRepository
     {
         /** @var ScheduleDefinition|null */
         return $this->repository()->query()
-            ->where(ScheduleDefinitionTableModel::column('scheduleKey'), Operator::Equals, $scheduleKey)
+            ->where(SchedulerScheduleDefinitionResource::column('schedule_key'), Operator::Equals, $scheduleKey)
             ->fetchOneAs(ScheduleDefinition::class, $this->orm()->getMapperRegistry());
     }
 
@@ -34,8 +34,8 @@ final class ScheduleDefinitionRepository implements ScheduleDefinitionRepository
     {
         /** @var list<ScheduleDefinition> */
         return $this->repository()->query()
-            ->where(ScheduleDefinitionTableModel::column('enabled'), Operator::Equals, true)
-            ->orderBy(ScheduleDefinitionTableModel::column('scheduleKey'), Direction::Asc)
+            ->where(SchedulerScheduleDefinitionResource::column('enabled'), Operator::Equals, true)
+            ->orderBy(SchedulerScheduleDefinitionResource::column('schedule_key'), Direction::Asc)
             ->fetchAllAs(ScheduleDefinition::class, $this->orm()->getMapperRegistry());
     }
 
@@ -63,7 +63,7 @@ final class ScheduleDefinitionRepository implements ScheduleDefinitionRepository
     private function repository(): DomainRepository
     {
         return $this->repository ??= $this->orm()->repository(
-            ScheduleDefinitionTableModel::class,
+            SchedulerScheduleDefinitionResource::class,
             ScheduleDefinition::class,
         );
     }
