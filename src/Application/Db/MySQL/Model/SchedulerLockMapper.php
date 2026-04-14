@@ -5,41 +5,41 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Db\MySQL\Model;
 
 use Semitexa\Orm\Attribute\AsMapper;
-use Semitexa\Orm\Contract\TableModelMapper;
+use Semitexa\Orm\Contract\ResourceModelMapperInterface;
 use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 
-#[AsMapper(resourceModel: SchedulerLockTableModel::class, domainModel: SchedulerLock::class)]
-final class SchedulerLockMapper implements TableModelMapper
+#[AsMapper(resourceModel: SchedulerLockResource::class, domainModel: SchedulerLock::class)]
+final class SchedulerLockMapper implements ResourceModelMapperInterface
 {
-    public function toDomain(object $tableModel): object
+    public function toDomain(object $resourceModel): object
     {
-        $tableModel instanceof SchedulerLockTableModel || throw new \InvalidArgumentException('Unexpected table model.');
+        $resourceModel instanceof SchedulerLockResource || throw new \InvalidArgumentException('Unexpected resource model.');
 
         return new SchedulerLock(
-            id: $tableModel->id,
-            lockKey: $tableModel->lockKey,
-            runId: $tableModel->runId,
-            workerId: $tableModel->workerId,
-            acquiredAt: $tableModel->acquiredAt,
-            expiresAt: $tableModel->expiresAt,
-            createdAt: $tableModel->createdAt,
-            updatedAt: $tableModel->updatedAt,
+            id: $resourceModel->id,
+            lockKey: $resourceModel->lock_key,
+            runId: $resourceModel->run_id,
+            workerId: $resourceModel->worker_id,
+            acquiredAt: $resourceModel->acquired_at,
+            expiresAt: $resourceModel->expires_at,
+            createdAt: $resourceModel->created_at,
+            updatedAt: $resourceModel->updated_at,
         );
     }
 
-    public function toTableModel(object $domainModel): object
+    public function toSourceModel(object $domainModel): object
     {
         $domainModel instanceof SchedulerLock || throw new \InvalidArgumentException('Unexpected domain model.');
 
-        return new SchedulerLockTableModel(
-            id: $domainModel->id,
-            lockKey: $domainModel->lockKey,
-            runId: $domainModel->runId,
-            workerId: $domainModel->workerId,
-            acquiredAt: $domainModel->acquiredAt,
-            expiresAt: $domainModel->expiresAt,
-            createdAt: $domainModel->createdAt,
-            updatedAt: $domainModel->updatedAt,
-        );
+        $resource = new SchedulerLockResource();
+        $resource->id = $domainModel->id;
+        $resource->lock_key = $domainModel->lockKey;
+        $resource->run_id = $domainModel->runId;
+        $resource->worker_id = $domainModel->workerId;
+        $resource->acquired_at = $domainModel->acquiredAt;
+        $resource->expires_at = $domainModel->expiresAt;
+        $resource->created_at = $domainModel->createdAt;
+        $resource->updated_at = $domainModel->updatedAt;
+        return $resource;
     }
 }

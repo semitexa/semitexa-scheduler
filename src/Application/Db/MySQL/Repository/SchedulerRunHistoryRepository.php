@@ -8,7 +8,6 @@ use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
-use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryTableModel;
 
 final class SchedulerRunHistoryRepository
 {
@@ -42,7 +41,7 @@ final class SchedulerRunHistoryRepository
     private function repository(): DomainRepository
     {
         return $this->repository ??= $this->orm()->repository(
-            SchedulerRunHistoryTableModel::class,
+            SchedulerRunHistoryResource::class,
             SchedulerRunHistoryResource::class,
         );
     }

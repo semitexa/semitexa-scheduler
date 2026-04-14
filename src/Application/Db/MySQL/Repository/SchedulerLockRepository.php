@@ -10,7 +10,7 @@ use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Uuid\Uuid7;
-use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerLockTableModel;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerLockResource;
 use Semitexa\Scheduler\Contract\SchedulerLockRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 
@@ -91,7 +91,7 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
     {
         /** @var SchedulerLock|null */
         return $this->repository()->query()
-            ->where(SchedulerLockTableModel::column('lockKey'), Operator::Equals, $lockKey)
+            ->where(SchedulerLockResource::column('lockKey'), Operator::Equals, $lockKey)
             ->fetchOneAs(SchedulerLock::class, $this->orm()->getMapperRegistry());
     }
 
@@ -108,7 +108,7 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
     private function repository(): DomainRepository
     {
         return $this->repository ??= $this->orm()->repository(
-            SchedulerLockTableModel::class,
+            SchedulerLockResource::class,
             SchedulerLock::class,
         );
     }
