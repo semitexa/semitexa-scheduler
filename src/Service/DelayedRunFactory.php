@@ -14,7 +14,7 @@ use Semitexa\Scheduler\Enum\SourceType;
 final class DelayedRunFactory
 {
     #[\Semitexa\Core\Attribute\InjectAsReadonly]
-    protected ?ScheduledRunRepositoryInterface $runRepository = null;
+    protected ScheduledRunRepositoryInterface $runRepository;
 
     public function create(
         string $jobClass,
@@ -27,7 +27,7 @@ final class DelayedRunFactory
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
     ): string {
-        if ($this->runRepository === null) {
+        if (!isset($this->runRepository)) {
             throw new \RuntimeException('ScheduledRunRepositoryInterface is not available.');
         }
 
