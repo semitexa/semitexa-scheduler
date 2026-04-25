@@ -51,10 +51,6 @@ final class SchedulerService implements SchedulerInterface
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
     ): string {
-        if (!isset($this->factory)) {
-            throw new \RuntimeException('DelayedRunFactory is not available.');
-        }
-
         $runAt = (new \DateTimeImmutable())->add($delay);
         return $this->dispatchAt($jobClass, $runAt, $payload, $pool, $tenantId, $lockKey, $maxAttempts, $retryBackoffSeconds);
     }
