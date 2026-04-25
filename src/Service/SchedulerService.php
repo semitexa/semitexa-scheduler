@@ -12,7 +12,7 @@ use Semitexa\Scheduler\Contract\SchedulerInterface;
 final class SchedulerService implements SchedulerInterface
 {
     #[InjectAsReadonly]
-    protected ?DelayedRunFactory $factory = null;
+    protected DelayedRunFactory $factory;
 
     public function dispatchAt(
         string $jobClass,
@@ -24,7 +24,7 @@ final class SchedulerService implements SchedulerInterface
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
     ): string {
-        if ($this->factory === null) {
+        if (!isset($this->factory)) {
             throw new \RuntimeException('DelayedRunFactory is not available.');
         }
 
@@ -51,10 +51,6 @@ final class SchedulerService implements SchedulerInterface
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
     ): string {
-        if ($this->factory === null) {
-            throw new \RuntimeException('DelayedRunFactory is not available.');
-        }
-
         $runAt = (new \DateTimeImmutable())->add($delay);
         return $this->dispatchAt($jobClass, $runAt, $payload, $pool, $tenantId, $lockKey, $maxAttempts, $retryBackoffSeconds);
     }

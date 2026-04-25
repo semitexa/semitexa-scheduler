@@ -18,7 +18,7 @@ use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
 {
     #[InjectAsReadonly]
-    protected ?OrmManager $orm = null;
+    protected OrmManager $orm;
 
     private ?DomainRepository $repository = null;
 

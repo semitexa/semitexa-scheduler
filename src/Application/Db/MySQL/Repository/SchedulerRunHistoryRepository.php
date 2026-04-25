@@ -12,7 +12,7 @@ use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
 final class SchedulerRunHistoryRepository
 {
     #[InjectAsReadonly]
-    protected ?OrmManager $orm = null;
+    protected OrmManager $orm;
 
     private ?DomainRepository $repository = null;
 

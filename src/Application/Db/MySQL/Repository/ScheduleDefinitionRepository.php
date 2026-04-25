@@ -18,7 +18,7 @@ use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 final class ScheduleDefinitionRepository implements ScheduleDefinitionRepositoryInterface
 {
     #[InjectAsReadonly]
-    protected ?OrmManager $orm = null;
+    protected OrmManager $orm;
 
     private ?DomainRepository $repository = null;
 

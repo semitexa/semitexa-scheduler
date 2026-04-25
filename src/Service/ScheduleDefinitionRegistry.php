@@ -15,10 +15,10 @@ use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 final class ScheduleDefinitionRegistry
 {
     #[InjectAsReadonly]
-    protected ?ScheduleDefinitionRepositoryInterface $repository = null;
+    protected ScheduleDefinitionRepositoryInterface $repository;
 
     #[InjectAsReadonly]
-    protected ?ClassDiscovery $classDiscovery = null;
+    protected ClassDiscovery $classDiscovery;
 
     /**
      * Discover all classes tagged with #[AsScheduledJob] and upsert them into the DB.

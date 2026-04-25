@@ -18,7 +18,7 @@ use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
 {
     #[InjectAsReadonly]
-    protected ?OrmManager $orm = null;
+    protected OrmManager $orm;
 
     private ?DomainRepository $repository = null;
 
