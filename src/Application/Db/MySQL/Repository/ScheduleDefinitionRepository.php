@@ -11,7 +11,7 @@ use Semitexa\Orm\Query\Direction;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerScheduleDefinitionResource;
-use Semitexa\Scheduler\Contract\ScheduleDefinitionRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 
 #[SatisfiesRepositoryContract(of: ScheduleDefinitionRepositoryInterface::class)]

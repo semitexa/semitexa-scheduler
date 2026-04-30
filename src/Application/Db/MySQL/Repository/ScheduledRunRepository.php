@@ -11,7 +11,7 @@ use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Uuid\Uuid7;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
-use Semitexa\Scheduler\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
 #[SatisfiesRepositoryContract(of: ScheduledRunRepositoryInterface::class)]

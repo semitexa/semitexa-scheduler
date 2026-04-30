@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Db\MySQL\Model;
 
 use Semitexa\Orm\Attribute\AsMapper;
-use Semitexa\Orm\Contract\ResourceModelMapperInterface;
+use Semitexa\Orm\Domain\Contract\ResourceModelMapperInterface;
 use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 
 #[AsMapper(resourceModel: SchedulerLockResource::class, domainModel: SchedulerLock::class)]
