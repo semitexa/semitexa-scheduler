@@ -13,7 +13,7 @@ use Semitexa\Scheduler\Application\Service\MisfirePolicyResolver;
 use Semitexa\Scheduler\Application\Service\SchedulePlanner;
 use Semitexa\Scheduler\Application\Service\TenantOccurrenceExpander;
 use Semitexa\Scheduler\Application\Service\ScheduleDefinitionRegistry;
-use Semitexa\Tenancy\Identification\TenantRepositoryInterface;
+use Semitexa\Tenancy\Domain\Contract\TenantRepositoryInterface;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;

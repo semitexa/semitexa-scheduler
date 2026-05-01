@@ -26,7 +26,7 @@ final class SchedulerRunHistoryRepository
         ?array $context = null,
     ): void {
         $resource = new SchedulerRunHistoryResource();
-        $resource->run_id = \Semitexa\Orm\Uuid\Uuid7::toBytes($runId);
+        $resource->run_id = \Semitexa\Orm\Application\Service\Uuid7::toBytes($runId);
         $resource->event_type = $eventType;
         $resource->from_status = $fromStatus;
         $resource->to_status = $toStatus;

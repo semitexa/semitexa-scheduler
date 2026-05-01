@@ -2,11 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Semitexa\Scheduler\Application\Db\MySQL\Model;
+namespace Semitexa\Scheduler\Application\Db\MySQL\Mapper;
 
 use Semitexa\Orm\Attribute\AsMapper;
 use Semitexa\Orm\Domain\Contract\ResourceModelMapperInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
 
 #[AsMapper(
     resourceModel: SchedulerRunResource::class,

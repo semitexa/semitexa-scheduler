@@ -6,7 +6,7 @@ namespace Semitexa\Scheduler\Application\Service;
 
 use Semitexa\Scheduler\Domain\Model\ScheduledOccurrence;
 use Semitexa\Scheduler\Domain\Enum\TenantScheduleMode;
-use Semitexa\Tenancy\Identification\TenantRepositoryInterface;
+use Semitexa\Tenancy\Domain\Contract\TenantRepositoryInterface;
 
 final class TenantOccurrenceExpander
 {
