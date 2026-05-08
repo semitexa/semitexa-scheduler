@@ -1,6 +1,6 @@
 {
     "name": "semitexa/scheduler",
-    "description": "Semitexa Scheduler — recurring and delayed background jobs with storage-backed planning, lease-based workers, and overlap protection",
+    "description": "Semitexa Scheduler \u2014 recurring and delayed background jobs with storage-backed planning, lease-based workers, and overlap protection",
     "type": "semitexa-module",
     "license": "MIT",
     "authors": [
@@ -36,6 +36,5 @@
         "filesystem",
         "s3",
         "minio"
-    ],
-    "version": "v0.0.4"
+    ]
 }
