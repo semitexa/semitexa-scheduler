@@ -25,17 +25,17 @@ final class SchedulerRunHistoryRepository
         ?string $message = null,
         ?array $context = null,
     ): void {
-        $resource = new SchedulerRunHistoryResource();
-        $resource->run_id = \Semitexa\Orm\Application\Service\Uuid7::toBytes($runId);
-        $resource->event_type = $eventType;
-        $resource->from_status = $fromStatus;
-        $resource->to_status = $toStatus;
-        $resource->worker_id = $workerId;
-        $resource->message = $message;
-        $resource->context_json = $context !== null ? json_encode($context, JSON_THROW_ON_ERROR) : null;
+        $resource = new SchedulerRunHistoryResource(
+            run_id: \Semitexa\Orm\Application\Service\Uuid7::toBytes($runId),
+            event_type: $eventType,
+            from_status: $fromStatus,
+            to_status: $toStatus,
+            worker_id: $workerId,
+            message: $message,
+            context_json: $context !== null ? json_encode($context, JSON_THROW_ON_ERROR) : null,
+        );
 
-        $persisted = $this->repository()->insert($resource);
-        $this->copyIntoMutableResource($persisted, $resource);
+        $this->repository()->insert($resource);
     }
 
     private function repository(): DomainRepository
@@ -49,14 +49,5 @@ final class SchedulerRunHistoryRepository
     private function orm(): OrmManager
     {
         return $this->orm ??= new OrmManager();
-    }
-
-    private function copyIntoMutableResource(object $source, SchedulerRunHistoryResource $target): void
-    {
-        $source instanceof SchedulerRunHistoryResource || throw new \InvalidArgumentException('Unexpected persisted resource.');
-
-        foreach (get_object_vars($source) as $property => $value) {
-            $target->{$property} = $value;
-        }
     }
 }

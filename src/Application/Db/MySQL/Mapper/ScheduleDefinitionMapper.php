@@ -42,25 +42,25 @@ final class ScheduleDefinitionMapper implements ResourceModelMapperInterface
     {
         $domainModel instanceof ScheduleDefinition || throw new \InvalidArgumentException('Unexpected domain model.');
 
-        $resource = new SchedulerScheduleDefinitionResource();
-        $resource->id = $domainModel->id;
-        $resource->schedule_key = $domainModel->scheduleKey;
-        $resource->job_class = $domainModel->jobClass;
-        $resource->cron_expression = $domainModel->cronExpression;
-        $resource->timezone = $domainModel->timezone;
-        $resource->pool = $domainModel->pool;
-        $resource->overlap_policy = $domainModel->overlapPolicy;
-        $resource->misfire_policy = $domainModel->misfirePolicy;
-        $resource->tenant_mode = $domainModel->tenantMode;
-        $resource->max_catch_up_runs = $domainModel->maxCatchUpRuns;
-        $resource->max_attempts = $domainModel->maxAttempts;
-        $resource->retry_backoff_seconds = $domainModel->retryBackoffSeconds;
-        $resource->enabled = $domainModel->enabled;
-        $resource->planning_cursor_at = $domainModel->planningCursorAt;
-        $resource->last_planned_at = $domainModel->lastPlannedAt;
-        $resource->payload_template_json = $domainModel->payloadTemplateJson;
-        $resource->created_at = $domainModel->createdAt;
-        $resource->updated_at = $domainModel->updatedAt;
-        return $resource;
+        return new SchedulerScheduleDefinitionResource(
+            id: $domainModel->id,
+            schedule_key: $domainModel->scheduleKey,
+            job_class: $domainModel->jobClass,
+            cron_expression: $domainModel->cronExpression,
+            timezone: $domainModel->timezone,
+            pool: $domainModel->pool,
+            overlap_policy: $domainModel->overlapPolicy,
+            misfire_policy: $domainModel->misfirePolicy,
+            tenant_mode: $domainModel->tenantMode,
+            max_catch_up_runs: $domainModel->maxCatchUpRuns,
+            max_attempts: $domainModel->maxAttempts,
+            retry_backoff_seconds: $domainModel->retryBackoffSeconds,
+            enabled: $domainModel->enabled,
+            planning_cursor_at: $domainModel->planningCursorAt,
+            last_planned_at: $domainModel->lastPlannedAt,
+            payload_template_json: $domainModel->payloadTemplateJson,
+            created_at: $domainModel->createdAt,
+            updated_at: $domainModel->updatedAt,
+        );
     }
 }

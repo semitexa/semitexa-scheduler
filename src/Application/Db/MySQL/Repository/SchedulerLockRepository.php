@@ -33,14 +33,16 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
         try {
             $result = $this->adapter()->execute(
                 "INSERT INTO scheduler_locks (id, lock_key, run_id, worker_id, acquired_at, expires_at, created_at, updated_at)
-                 VALUES (:id, :lock_key, :run_id, :worker_id, :now, :expires, :now, :now)",
+                 VALUES (:id, :lock_key, :run_id, :worker_id, :acquired, :expires, :created, :updated)",
                 [
                     'id' => $newId,
                     'lock_key' => $lockKey,
                     'run_id' => $binRunId,
                     'worker_id' => $workerId,
-                    'now' => $nowStr,
+                    'acquired' => $nowStr,
                     'expires' => $expires,
+                    'created' => $nowStr,
+                    'updated' => $nowStr,
                 ],
             );
 
@@ -50,14 +52,16 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
 
         $replaced = $this->adapter()->execute(
             "UPDATE scheduler_locks
-             SET run_id = :run_id, worker_id = :worker_id, acquired_at = :now, expires_at = :expires, updated_at = :now
-             WHERE lock_key = :lock_key AND expires_at < :now",
+             SET run_id = :run_id, worker_id = :worker_id, acquired_at = :acquired, expires_at = :expires, updated_at = :updated
+             WHERE lock_key = :lock_key AND expires_at < :now_guard",
             [
                 'run_id' => $binRunId,
                 'worker_id' => $workerId,
-                'now' => $nowStr,
+                'acquired' => $nowStr,
                 'expires' => $expires,
+                'updated' => $nowStr,
                 'lock_key' => $lockKey,
+                'now_guard' => $nowStr,
             ],
         );
 

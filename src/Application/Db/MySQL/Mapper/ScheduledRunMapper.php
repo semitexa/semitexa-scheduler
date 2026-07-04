@@ -53,33 +53,33 @@ final class ScheduledRunMapper implements ResourceModelMapperInterface
     {
         $domainModel instanceof ScheduledRun || throw new \InvalidArgumentException('Unexpected domain model.');
 
-        $resource = new SchedulerRunResource();
-        $resource->id = $domainModel->id;
-        $resource->source_type = $domainModel->sourceType;
-        $resource->schedule_definition_id = $domainModel->scheduleDefinitionId;
-        $resource->schedule_key = $domainModel->scheduleKey;
-        $resource->occurrence_key = $domainModel->occurrenceKey;
-        $resource->job_class = $domainModel->jobClass;
-        $resource->tenant_id = $domainModel->tenantId;
-        $resource->pool = $domainModel->pool;
-        $resource->lock_key = $domainModel->lockKey;
-        $resource->status = $domainModel->status;
-        $resource->scheduled_for = $domainModel->scheduledFor;
-        $resource->available_at = $domainModel->availableAt;
-        $resource->misfired_at = $domainModel->misfiredAt;
-        $resource->attempt_count = $domainModel->attemptCount;
-        $resource->max_attempts = $domainModel->maxAttempts;
-        $resource->retry_backoff_seconds = $domainModel->retryBackoffSeconds;
-        $resource->lease_owner = $domainModel->leaseOwner;
-        $resource->lease_expires_at = $domainModel->leaseExpiresAt;
-        $resource->locked_at = $domainModel->lockedAt;
-        $resource->started_at = $domainModel->startedAt;
-        $resource->finished_at = $domainModel->finishedAt;
-        $resource->last_heartbeat_at = $domainModel->lastHeartbeatAt;
-        $resource->last_error = $domainModel->lastError;
-        $resource->payload_json = $domainModel->payloadJson;
-        $resource->created_at = $domainModel->createdAt;
-        $resource->updated_at = $domainModel->updatedAt;
-        return $resource;
+        return new SchedulerRunResource(
+            id: $domainModel->id,
+            source_type: $domainModel->sourceType,
+            schedule_definition_id: $domainModel->scheduleDefinitionId,
+            schedule_key: $domainModel->scheduleKey,
+            occurrence_key: $domainModel->occurrenceKey,
+            job_class: $domainModel->jobClass,
+            tenant_id: $domainModel->tenantId,
+            pool: $domainModel->pool,
+            lock_key: $domainModel->lockKey,
+            status: $domainModel->status,
+            scheduled_for: $domainModel->scheduledFor,
+            available_at: $domainModel->availableAt,
+            misfired_at: $domainModel->misfiredAt,
+            attempt_count: $domainModel->attemptCount,
+            max_attempts: $domainModel->maxAttempts,
+            retry_backoff_seconds: $domainModel->retryBackoffSeconds,
+            lease_owner: $domainModel->leaseOwner,
+            lease_expires_at: $domainModel->leaseExpiresAt,
+            locked_at: $domainModel->lockedAt,
+            started_at: $domainModel->startedAt,
+            finished_at: $domainModel->finishedAt,
+            last_heartbeat_at: $domainModel->lastHeartbeatAt,
+            last_error: $domainModel->lastError,
+            payload_json: $domainModel->payloadJson,
+            created_at: $domainModel->createdAt,
+            updated_at: $domainModel->updatedAt,
+        );
     }
 }

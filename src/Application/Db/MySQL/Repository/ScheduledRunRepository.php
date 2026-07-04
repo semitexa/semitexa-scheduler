@@ -55,11 +55,11 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
             "SELECT id FROM scheduler_runs
              WHERE pool = :pool
                AND status IN ('pending', 'retry_scheduled')
-               AND available_at <= :now
-               AND (lease_expires_at IS NULL OR lease_expires_at < :now)
+               AND available_at <= :now_avail
+               AND (lease_expires_at IS NULL OR lease_expires_at < :now_lease)
              ORDER BY available_at ASC
              LIMIT 1",
-            ['pool' => $pool, 'now' => $nowStr],
+            ['pool' => $pool, 'now_avail' => $nowStr, 'now_lease' => $nowStr],
         );
 
         $row = $result->rows[0] ?? null;
@@ -74,15 +74,17 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
              SET status = 'claimed',
                  lease_owner = :worker,
                  lease_expires_at = :lease_until,
-                 updated_at = :now
+                 updated_at = :now_upd
              WHERE id = :id
                AND status IN ('pending', 'retry_scheduled')
-               AND available_at <= :now
-               AND (lease_expires_at IS NULL OR lease_expires_at < :now)",
+               AND available_at <= :now_avail
+               AND (lease_expires_at IS NULL OR lease_expires_at < :now_lease)",
             [
                 'worker' => $workerId,
                 'lease_until' => $leaseUntil,
-                'now' => $nowStr,
+                'now_upd' => $nowStr,
+                'now_avail' => $nowStr,
+                'now_lease' => $nowStr,
                 'id' => $candidateId,
             ],
         );
@@ -104,12 +106,13 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
         $result = $this->adapter()->execute(
             "UPDATE scheduler_runs
              SET lease_expires_at = :lease_until,
-                 last_heartbeat_at = :now,
-                 updated_at = :now
+                 last_heartbeat_at = :now_beat,
+                 updated_at = :now_upd
              WHERE id = :id AND lease_owner = :worker",
             [
                 'lease_until' => $leaseUntil,
-                'now' => $nowStr,
+                'now_beat' => $nowStr,
+                'now_upd' => $nowStr,
                 'id' => $binId,
                 'worker' => $workerId,
             ],
@@ -126,11 +129,11 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
              SET status = 'pending',
                  lease_owner = NULL,
                  lease_expires_at = NULL,
-                 updated_at = :now
+                 updated_at = :now_upd
              WHERE status IN ('claimed', 'running')
                AND lease_expires_at IS NOT NULL
-               AND lease_expires_at < :now",
-            ['now' => $nowStr],
+               AND lease_expires_at < :now_lease",
+            ['now_upd' => $nowStr, 'now_lease' => $nowStr],
         );
 
         return $result->rowCount;
