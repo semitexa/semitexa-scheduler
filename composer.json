@@ -1,6 +1,6 @@
 {
     "name": "semitexa/scheduler",
-    "description": "Semitexa Scheduler \u2014 recurring and delayed background jobs with storage-backed planning, lease-based workers, and overlap protection",
+    "description": "Semitexa Scheduler — recurring and delayed background jobs with storage-backed planning, lease-based workers, and overlap protection",
     "type": "semitexa-module",
     "license": "MIT",
     "authors": [
@@ -19,6 +19,11 @@
     "autoload": {
         "psr-4": {
             "Semitexa\\Scheduler\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Semitexa\\Scheduler\\Tests\\": "tests/"
         }
     },
     "extra": {
