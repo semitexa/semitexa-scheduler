@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Console\Command;
 
 use Semitexa\Core\Attribute\AsCommand;
-use Semitexa\Core\Container\ContainerFactory;
+use Semitexa\Core\Attribute\InjectAsReadonly;
+use Semitexa\Core\Event\EventDispatcherInterface;
+use Semitexa\Orm\OrmManager;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
@@ -22,6 +24,15 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 #[AsCommand(name: 'scheduler:run-now', description: 'Create an immediate run for a schedule key (operator intervention)')]
 final class SchedulerRunNowCommand extends Command
 {
+    #[InjectAsReadonly]
+    protected ScheduleDefinitionRepositoryInterface $definitionRepo;
+
+    #[InjectAsReadonly]
+    protected ScheduledRunRepositoryInterface $runRepo;
+
+    #[InjectAsReadonly]
+    protected EventDispatcherInterface $events;
+
     protected function configure(): void
     {
         $this->setName('scheduler:run-now')
@@ -46,11 +57,13 @@ final class SchedulerRunNowCommand extends Command
         $tenantId    = $input->getOption('tenant');
 
         try {
-            $container      = ContainerFactory::get();
-            $definitionRepo = $container->get(ScheduleDefinitionRepositoryInterface::class);
-            $runRepo        = $container->get(ScheduledRunRepositoryInterface::class);
+            // CLI parity with the Swoole WorkerStart bootstrap: this
+            // command writes a run row; the write publishes like any other.
+            OrmManager::setDefaultEventDispatcherResolver(
+                fn (): EventDispatcherInterface => $this->events,
+            );
 
-            $definition = $definitionRepo->findByKey($scheduleKey);
+            $definition = $this->definitionRepo->findByKey($scheduleKey);
 
             if ($definition === null) {
                 $io->error("Schedule definition '{$scheduleKey}' not found.");
@@ -81,7 +94,7 @@ final class SchedulerRunNowCommand extends Command
             $run->maxAttempts = $definition->maxAttempts;
             $run->retryBackoffSeconds = $definition->retryBackoffSeconds;
 
-            $runRepo->save($run);
+            $this->runRepo->save($run);
 
             $io->success("Created immediate run '{$run->id}' for '{$scheduleKey}'.");
         } catch (\Throwable $e) {
