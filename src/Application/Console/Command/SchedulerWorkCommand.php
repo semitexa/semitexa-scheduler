@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Console\Command;
 
 use Semitexa\Core\Attribute\AsCommand;
-use Semitexa\Core\Container\ContainerFactory;
+use Semitexa\Core\Attribute\InjectAsReadonly;
+use Semitexa\Core\Event\EventDispatcherInterface;
+use Semitexa\Orm\OrmManager;
 use Semitexa\Scheduler\Application\Db\MySQL\Repository\SchedulerRunHistoryRepository;
 use Semitexa\Scheduler\Configuration\SchedulerConfig;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
@@ -26,6 +28,18 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 #[AsCommand(name: 'scheduler:work', description: 'Run the scheduler worker for a given pool')]
 final class SchedulerWorkCommand extends Command
 {
+    #[InjectAsReadonly]
+    protected ScheduledRunRepositoryInterface $runRepo;
+
+    #[InjectAsReadonly]
+    protected SchedulerLockRepositoryInterface $lockRepo;
+
+    #[InjectAsReadonly]
+    protected ScheduleDefinitionRepositoryInterface $definitionRepo;
+
+    #[InjectAsReadonly]
+    protected EventDispatcherInterface $events;
+
     protected function configure(): void
     {
         $this->setName('scheduler:work')
@@ -46,27 +60,27 @@ final class SchedulerWorkCommand extends Command
         $io->title('Scheduler Worker');
 
         try {
-            $container      = ContainerFactory::get();
-            $config         = SchedulerConfig::create();
-            $runRepo        = $container->get(ScheduledRunRepositoryInterface::class);
-            $lockRepo       = $container->get(SchedulerLockRepositoryInterface::class);
-            $definitionRepo = $container->get(ScheduleDefinitionRepositoryInterface::class);
-            try {
-                $historyRepo = $container->get(SchedulerRunHistoryRepository::class);
-            } catch (\Throwable) {
-                $historyRepo = new SchedulerRunHistoryRepository();
-            }
+            // CLI parity with the Swoole WorkerStart bootstrap: register the
+            // ORM's default dispatcher resolver BEFORE any job runs, so every
+            // scheduled job's ORM writes auto-publish their invalidation
+            // signals without each job carrying its own CLI bootstrap.
+            OrmManager::setDefaultEventDispatcherResolver(
+                fn (): EventDispatcherInterface => $this->events,
+            );
 
-            $leaseManager   = new RunLeaseManager($runRepo, $config->leaseTtlSeconds);
-            $lockManager    = new SchedulerLockManager($lockRepo, $config->lockTtlSeconds);
-            $overlapHandler = new OverlapPolicyHandler($runRepo, $lockManager, $definitionRepo, $historyRepo);
-            $executor       = new RunExecutor($runRepo, $historyRepo);
-            $retryScheduler = new RetryScheduler($runRepo, $historyRepo);
+            $config      = SchedulerConfig::create();
+            $historyRepo = new SchedulerRunHistoryRepository();
+
+            $leaseManager   = new RunLeaseManager($this->runRepo, $config->leaseTtlSeconds);
+            $lockManager    = new SchedulerLockManager($this->lockRepo, $config->lockTtlSeconds);
+            $overlapHandler = new OverlapPolicyHandler($this->runRepo, $lockManager, $this->definitionRepo, $historyRepo);
+            $executor       = new RunExecutor($this->runRepo, $historyRepo);
+            $retryScheduler = new RetryScheduler($this->runRepo, $historyRepo);
 
             $worker = new SchedulerWorker(
                 leaseManager:    $leaseManager,
                 lockManager:     $lockManager,
-                runRepository:   $runRepo,
+                runRepository:   $this->runRepo,
                 overlapHandler:  $overlapHandler,
                 executor:        $executor,
                 retryScheduler:  $retryScheduler,
