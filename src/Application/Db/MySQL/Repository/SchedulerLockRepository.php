@@ -47,7 +47,16 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
             );
 
             return $result->rowCount > 0;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            // A duplicate-key violation means the lock row already exists — the
+            // lock is held. That is expected contention: fall through to steal
+            // it IF it has expired. Any OTHER failure (deadlock, timeout, lost
+            // connection) has an unknown outcome; silently proceeding to the
+            // steal UPDATE would weaken the distributed lock and can double-run
+            // a job. Surface it instead of misreading it as contention.
+            if (!self::isDuplicateKeyException($e)) {
+                throw $e;
+            }
         }
 
         $replaced = $this->adapter()->execute(
@@ -107,6 +116,20 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
         );
 
         return $result->rowCount;
+    }
+
+    /**
+     * A unique/primary-key collision, portable across MySQL and SQLite: both
+     * surface an integrity-constraint violation as PDO SQLSTATE 23000. The
+     * message fallback catches drivers that carry the detail there instead.
+     */
+    private static function isDuplicateKeyException(\Throwable $e): bool
+    {
+        if ($e instanceof \PDOException && (string) $e->getCode() === '23000') {
+            return true;
+        }
+
+        return str_contains(strtolower($e->getMessage()), 'duplicate');
     }
 
     private function repository(): DomainRepository
