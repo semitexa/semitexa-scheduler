@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Console\Command;
 
 use Semitexa\Core\Attribute\AsCommand;
-use Semitexa\Core\Container\ContainerFactory;
+use Semitexa\Core\Attribute\InjectAsReadonly;
+use Semitexa\Core\Event\EventDispatcherInterface;
+use Semitexa\Orm\OrmManager;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Application\Service\CronOccurrenceCalculator;
@@ -22,6 +24,27 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 #[AsCommand(name: 'scheduler:plan', description: 'Materialize due recurring schedule occurrences into run rows')]
 final class SchedulerPlanCommand extends Command
 {
+    #[InjectAsReadonly]
+    protected ScheduleDefinitionRepositoryInterface $definitionRepo;
+
+    #[InjectAsReadonly]
+    protected ScheduledRunRepositoryInterface $runRepo;
+
+    /**
+     * Resolves to the environment-configured repository
+     * (`EnvironmentTenantRepository`); tenancy is a hard dependency of this
+     * package, so per-tenant expansion always has a repository to fan out
+     * over — the old "could not be resolved" degradation path is gone.
+     */
+    #[InjectAsReadonly]
+    protected TenantRepositoryInterface $tenantRepo;
+
+    #[InjectAsReadonly]
+    protected ScheduleDefinitionRegistry $registry;
+
+    #[InjectAsReadonly]
+    protected EventDispatcherInterface $events;
+
     protected function configure(): void
     {
         $this->setName('scheduler:plan')
@@ -34,35 +57,23 @@ final class SchedulerPlanCommand extends Command
         $io->title('Scheduler Planner');
 
         try {
-            $container      = ContainerFactory::get();
-            $definitionRepo = $container->get(ScheduleDefinitionRepositoryInterface::class);
-            $runRepo        = $container->get(ScheduledRunRepositoryInterface::class);
-            $tenantRepo     = null;
-            if (interface_exists(TenantRepositoryInterface::class)) {
-                try {
-                    $tenantRepo = $container->get(TenantRepositoryInterface::class);
-                } catch (\Throwable $e) {
-                    $io->warning(
-                        'Tenant repository could not be resolved; continuing without tenant expansion. '
-                        . 'Please check container configuration for '
-                        . TenantRepositoryInterface::class
-                        . '. Error: '
-                        . $e->getMessage()
-                    );
-                    $tenantRepo = null;
-                }
-            }
+            // CLI parity with the Swoole WorkerStart bootstrap (same as
+            // scheduler:work): the planner's own ORM writes — definition
+            // sync + run materialization — publish their invalidation
+            // signals like any other write.
+            OrmManager::setDefaultEventDispatcherResolver(
+                fn (): EventDispatcherInterface => $this->events,
+            );
 
             // Sync code-discovered schedules to DB
-            $registry = $container->get(ScheduleDefinitionRegistry::class);
-            $registry->sync();
+            $this->registry->sync();
 
             $planner = new SchedulePlanner(
-                definitionRepository: $definitionRepo,
-                runRepository:        $runRepo,
+                definitionRepository: $this->definitionRepo,
+                runRepository:        $this->runRepo,
                 calculator:           new CronOccurrenceCalculator(),
                 misfireResolver:      new MisfirePolicyResolver(),
-                tenantExpander:       new TenantOccurrenceExpander($tenantRepo),
+                tenantExpander:       new TenantOccurrenceExpander($this->tenantRepo),
             );
 
             $now     = new \DateTimeImmutable();

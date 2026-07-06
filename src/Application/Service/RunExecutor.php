@@ -64,6 +64,11 @@ final class RunExecutor
                 payload: $payload,
             );
 
+            // Dynamic dispatch: the job class name lives in a DB row, so
+            // attribute injection cannot express it — resolving it IS the
+            // container's job. This exact class is blessed in
+            // StaticContainerAccessRule (the Queue-consumer tier); jobs must
+            // carry #[AsService] alongside #[AsScheduledJob] to be resolvable.
             $container = ContainerFactory::get();
             /** @var ScheduledJobInterface $job */
             $job = $container->get($run->jobClass);

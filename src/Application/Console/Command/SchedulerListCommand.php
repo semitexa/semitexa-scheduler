@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Scheduler\Application\Console\Command;
 
 use Semitexa\Core\Attribute\AsCommand;
-use Semitexa\Core\Container\ContainerFactory;
+use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Application\Service\CronOccurrenceCalculator;
 use Symfony\Component\Console\Command\Command;
@@ -16,6 +16,9 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 #[AsCommand(name: 'scheduler:list', description: 'List all enabled schedule definitions and their next due time')]
 final class SchedulerListCommand extends Command
 {
+    #[InjectAsReadonly]
+    protected ScheduleDefinitionRepositoryInterface $definitionRepo;
+
     protected function configure(): void
     {
         $this->setName('scheduler:list')
@@ -28,11 +31,9 @@ final class SchedulerListCommand extends Command
         $io->title('Schedule Definitions');
 
         try {
-            $container      = ContainerFactory::get();
-            $definitionRepo = $container->get(ScheduleDefinitionRepositoryInterface::class);
-            $calculator     = new CronOccurrenceCalculator();
+            $calculator = new CronOccurrenceCalculator();
 
-            $definitions = $definitionRepo->findAllEnabled();
+            $definitions = $this->definitionRepo->findAllEnabled();
 
             if ($definitions === []) {
                 $io->note('No enabled schedule definitions found.');

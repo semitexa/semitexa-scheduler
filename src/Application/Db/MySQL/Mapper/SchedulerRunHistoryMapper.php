@@ -14,12 +14,12 @@ final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
     public function toDomain(object $resourceModel): object
     {
         $resourceModel instanceof SchedulerRunHistoryResource || throw new \InvalidArgumentException('Unexpected resource model.');
-        return clone $resourceModel;
+        return $resourceModel; // readonly: safe to share the instance
     }
 
     public function toSourceModel(object $domainModel): object
     {
         $domainModel instanceof SchedulerRunHistoryResource || throw new \InvalidArgumentException('Unexpected domain model.');
-        return clone $domainModel;
+        return $domainModel; // readonly: safe to share the instance
     }
 }
