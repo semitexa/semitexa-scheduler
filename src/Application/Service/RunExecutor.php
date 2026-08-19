@@ -48,6 +48,20 @@ final class RunExecutor
             $previousContext = CoroutineContextStore::swapFallback($newContext);
         }
 
+        // Optional dev observer: a scheduler run is a process like any request,
+        // and the Observatory journal is how background work becomes visible in
+        // the live panel and ai:observe. 'job' roots are journal-only — no
+        // trace buffer opens. Same shape and cost as every other tracer seam.
+        $tracer = $this->resolveTracer();
+        $tracer?->begin('job', [
+            'kind' => 'scheduler',
+            'route' => $run->jobClass,
+            'path' => $run->id,
+            'attempt' => $run->attemptCount,
+            'tenant' => $run->tenantId,
+        ]);
+        $outcome = 'failed';
+
         try {
             $payload = $run->payloadJson !== null
                 ? json_decode($run->payloadJson, true, 512, JSON_THROW_ON_ERROR)
@@ -76,14 +90,41 @@ final class RunExecutor
 
             $output?->writeln("<info>Run '{$run->id}' executed successfully (attempt {$run->attemptCount}).</info>");
 
+            $outcome = 'success';
+
             return RunExecutionResult::success();
         } catch (\Throwable $e) {
             $output?->writeln("<error>Run '{$run->id}' failed: {$e->getMessage()}</error>");
             return RunExecutionResult::failure($e->getMessage());
         } finally {
+            $tracer?->end('job', ['status' => $outcome]);
             if ($run->tenantId !== null) {
                 CoroutineContextStore::swapFallback($previousContext);
             }
+        }
+    }
+
+    /**
+     * The optional dev tracer, wrapped so it can never throw into a run.
+     * This class already lives on the rule's dynamic-dispatch allowlist, so
+     * resolving from the container here is the blessed path.
+     */
+    private function resolveTracer(): ?\Semitexa\Core\Pipeline\RequestTracerInterface
+    {
+        // Wrapped whole: get() can throw even after has() said true (a broken
+        // binding), and an optional observer failing to RESOLVE must degrade
+        // to "no observer", never abort the work it wanted to watch.
+        try {
+            $container = ContainerFactory::get();
+            $resolved = $container->has(\Semitexa\Core\Pipeline\RequestTracerInterface::class)
+                ? $container->get(\Semitexa\Core\Pipeline\RequestTracerInterface::class)
+                : null;
+
+            return \Semitexa\Core\Pipeline\SafeRequestTracer::wrap(
+                $resolved instanceof \Semitexa\Core\Pipeline\RequestTracerInterface ? $resolved : null,
+            );
+        } catch (\Throwable) {
+            return null;
         }
     }
 }
