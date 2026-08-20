@@ -10,6 +10,15 @@ use Semitexa\Core\Event\EventDispatcherInterface;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\SchedulerLockRepositoryInterface;
+use Semitexa\Scheduler\Application\Service\OverlapPolicyHandler;
+use Semitexa\Scheduler\Application\Service\RetryScheduler;
+use Semitexa\Scheduler\Application\Service\RunExecutor;
+use Semitexa\Scheduler\Application\Service\RunLeaseManager;
+use Semitexa\Scheduler\Application\Service\SchedulerLockManager;
+use Semitexa\Scheduler\Application\Service\SchedulerWorker;
+use Semitexa\Scheduler\Configuration\SchedulerConfig;
+use Semitexa\Scheduler\Application\Db\MySQL\Repository\SchedulerRunHistoryRepository;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Domain\Enum\OverlapPolicy;
 use Semitexa\Scheduler\Domain\Enum\RunStatus;
@@ -33,6 +42,9 @@ final class SchedulerRunNowCommand extends Command
     #[InjectAsReadonly]
     protected EventDispatcherInterface $events;
 
+    #[InjectAsReadonly]
+    protected SchedulerLockRepositoryInterface $lockRepo;
+
     protected function configure(): void
     {
         $this->setName('scheduler:run-now')
@@ -47,6 +59,11 @@ final class SchedulerRunNowCommand extends Command
                  shortcut:    't',
                  mode:        InputOption::VALUE_OPTIONAL,
                  description: 'Tenant ID for tenant-bound runs',
+             )
+             ->addOption(
+                 name:        'inline',
+                 mode:        InputOption::VALUE_NONE,
+                 description: 'Execute the run synchronously and exit by its outcome - no worker needed. For operator one-offs and test stands.',
              );
     }
 
@@ -96,6 +113,10 @@ final class SchedulerRunNowCommand extends Command
 
             $this->runRepo->save($run);
 
+            if ($input->getOption('inline')) {
+                return $this->runInline($run, $io);
+            }
+
             $io->success("Created immediate run '{$run->id}' for '{$scheduleKey}'.");
         } catch (\Throwable $e) {
             $io->error('scheduler:run-now failed: ' . $e->getMessage());
@@ -103,5 +124,41 @@ final class SchedulerRunNowCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Drive the just-created run through the SAME machinery the worker loop
+     * uses - overlap policy, lease heartbeat, executor, retry bookkeeping,
+     * Observatory journal - and answer with its real outcome. A failed job
+     * exits non-zero, which is the whole point for scripts and test stands.
+     */
+    private function runInline(ScheduledRun $run, SymfonyStyle $io): int
+    {
+        $config      = SchedulerConfig::create();
+        $historyRepo = new SchedulerRunHistoryRepository();
+        $lockManager = new SchedulerLockManager($this->lockRepo, $config->lockTtlSeconds);
+
+        $worker = new SchedulerWorker(
+            leaseManager:      new RunLeaseManager($this->runRepo, $config->leaseTtlSeconds),
+            lockManager:       $lockManager,
+            runRepository:     $this->runRepo,
+            overlapHandler:    new OverlapPolicyHandler($this->runRepo, $lockManager, $this->definitionRepo, $historyRepo),
+            executor:          new RunExecutor($this->runRepo, $historyRepo),
+            retryScheduler:    new RetryScheduler($this->runRepo, $historyRepo),
+            historyRepository: $historyRepo,
+            config:            $config,
+        );
+
+        $ok = $worker->processSingle($run, 'run-now-inline-' . getmypid());
+
+        if ($ok) {
+            $io->success("Run '{$run->id}' executed inline and succeeded.");
+
+            return Command::SUCCESS;
+        }
+
+        $io->error("Run '{$run->id}' executed inline and FAILED (status: {$run->status}). See scheduler history for the error.");
+
+        return Command::FAILURE;
     }
 }

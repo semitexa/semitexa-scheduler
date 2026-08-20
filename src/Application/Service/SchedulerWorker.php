@@ -74,6 +74,20 @@ final class SchedulerWorker
         $this->shouldStop = true;
     }
 
+    /**
+     * Execute ONE run synchronously and say whether it succeeded — the seam
+     * behind `scheduler:run-now --inline`. Same path as the loop: overlap
+     * policy, lease heartbeat, executor, retry bookkeeping; the only
+     * difference is that the caller hands the run over instead of a poll
+     * finding it.
+     */
+    public function processSingle(ScheduledRun $run, string $workerId): bool
+    {
+        $this->processRun($run, $workerId);
+
+        return $run->status === RunStatus::Succeeded->value;
+    }
+
     private function processRun(ScheduledRun $run, string $workerId): void
     {
         $this->log("Processing run '{$run->id}' (job: {$run->jobClass})");
