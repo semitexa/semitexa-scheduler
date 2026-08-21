@@ -17,6 +17,9 @@ use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 #[SatisfiesRepositoryContract(of: SchedulerLockRepositoryInterface::class)]
 final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
 {
+    /** MySQL's error code for a duplicate entry on a unique or primary key. */
+    private const MYSQL_DUPLICATE_ENTRY = 1062;
+
     #[InjectAsReadonly]
     protected OrmManager $orm;
 
@@ -119,17 +122,48 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
     }
 
     /**
-     * A unique/primary-key collision, portable across MySQL and SQLite: both
-     * surface an integrity-constraint violation as PDO SQLSTATE 23000. The
-     * message fallback catches drivers that carry the detail there instead.
+     * A unique/primary-key collision specifically — NOT any integrity
+     * violation. SQLSTATE 23000 also covers foreign-key failures (MySQL 1451
+     * and 1452), and treating one of those as "someone else won the race"
+     * would take the wrong branch, so the driver error code decides: MySQL
+     * reports 1062 for a duplicate entry. SQLite has no such code and reports
+     * SQLSTATE 23000 with "UNIQUE constraint failed" in the message, which
+     * the message check below covers.
+     *
+     * The exception may arrive in three shapes: the ORM's typed
+     * ConstraintViolationException (which carries sqlState/driverCode and
+     * chains the PDOException), a raw PDOException, or something that wraps
+     * either — so the chain is walked rather than the outermost checked.
      */
     private static function isDuplicateKeyException(\Throwable $e): bool
     {
-        if ($e instanceof \PDOException && (string) $e->getCode() === '23000') {
-            return true;
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            // The typed ORM exception, when running against an ORM that
+            // classifies. instanceof against a class the installed ORM does
+            // not define is simply false — no error, no autoload.
+            if ($current instanceof \Semitexa\Orm\Exception\ConstraintViolationException
+                && $current->driverCode === self::MYSQL_DUPLICATE_ENTRY) {
+                return true;
+            }
+
+            if ($current instanceof \PDOException
+                && ($current->errorInfo[1] ?? null) === self::MYSQL_DUPLICATE_ENTRY) {
+                return true;
+            }
+
+            // Message fallback for drivers that carry no usable code: MySQL
+            // says "Duplicate entry", PostgreSQL "duplicate key value",
+            // SQLite "UNIQUE constraint failed". Foreign-key failures say
+            // "foreign key constraint fails" and match none of these, which
+            // is the distinction that matters here.
+            $message = strtolower($current->getMessage());
+            if (str_contains($message, 'duplicate')
+                || str_contains($message, 'unique constraint failed')) {
+                return true;
+            }
         }
 
-        return str_contains(strtolower($e->getMessage()), 'duplicate');
+        return false;
     }
 
     private function repository(): DomainRepository
