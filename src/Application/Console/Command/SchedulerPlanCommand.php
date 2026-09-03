@@ -66,7 +66,9 @@ final class SchedulerPlanCommand extends Command
             );
 
             // Sync code-discovered schedules to DB
-            $this->registry->sync();
+            foreach ($this->registry->sync() as $problem) {
+                $io->warning($problem);
+            }
 
             $planner = new SchedulePlanner(
                 definitionRepository: $this->definitionRepo,
