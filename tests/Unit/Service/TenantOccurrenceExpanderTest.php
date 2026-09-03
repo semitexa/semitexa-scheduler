@@ -15,9 +15,9 @@ use Semitexa\Tenancy\Domain\Model\Tenant;
 /**
  * Per-tenant planning fan-out: a PerTenant occurrence becomes one
  * occurrence per registered tenant (tenant-scoped occurrence keys keep
- * them idempotent), Global passes through untouched, and a missing
- * tenant repository degrades to planning nothing rather than planning
- * a tenant-blind run.
+ * them idempotent), Global passes through untouched, and an install with
+ * no tenancy still gets its one run — planning nothing there would leave
+ * the job declared, listed and silently never executed.
  */
 final class TenantOccurrenceExpanderTest extends TestCase
 {
@@ -56,19 +56,24 @@ final class TenantOccurrenceExpanderTest extends TestCase
     }
 
     #[Test]
-    public function per_tenant_mode_without_a_repository_plans_nothing(): void
+    public function per_tenant_mode_without_a_repository_plans_one_tenant_blind_run(): void
     {
         $expander = new TenantOccurrenceExpander(null);
+        $occurrence = $this->occurrence();
 
-        self::assertSame([], $expander->expand($this->occurrence(), TenantScheduleMode::PerTenant));
+        $expanded = $expander->expand($occurrence, TenantScheduleMode::PerTenant);
+
+        self::assertSame([$occurrence], $expanded);
+        self::assertNull($expanded[0]->tenantId);
     }
 
     #[Test]
-    public function per_tenant_mode_with_no_tenants_plans_nothing(): void
+    public function per_tenant_mode_with_no_tenants_configured_plans_one_tenant_blind_run(): void
     {
         $expander = new TenantOccurrenceExpander($this->repositoryWith());
+        $occurrence = $this->occurrence();
 
-        self::assertSame([], $expander->expand($this->occurrence(), TenantScheduleMode::PerTenant));
+        self::assertSame([$occurrence], $expander->expand($occurrence, TenantScheduleMode::PerTenant));
     }
 
     private function occurrence(): ScheduledOccurrence
