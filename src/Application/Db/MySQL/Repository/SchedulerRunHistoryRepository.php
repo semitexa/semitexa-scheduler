@@ -8,6 +8,7 @@ use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
+use Semitexa\Scheduler\Domain\Model\RunHistoryEntry;
 
 final class SchedulerRunHistoryRepository
 {
@@ -25,24 +26,25 @@ final class SchedulerRunHistoryRepository
         ?string $message = null,
         ?array $context = null,
     ): void {
-        $resource = new SchedulerRunHistoryResource(
-            run_id: \Semitexa\Orm\Application\Service\Uuid7::toBytes($runId),
-            event_type: $eventType,
-            from_status: $fromStatus,
-            to_status: $toStatus,
-            worker_id: $workerId,
+        // The id is left empty: the ORM mints it on insert. Byte-packing the
+        // run id and encoding the context are the mapper's job now.
+        $this->repository()->insert(new RunHistoryEntry(
+            id: '',
+            runId: $runId,
+            eventType: $eventType,
+            fromStatus: $fromStatus,
+            toStatus: $toStatus,
+            workerId: $workerId,
             message: $message,
-            context_json: $context !== null ? json_encode($context, JSON_THROW_ON_ERROR) : null,
-        );
-
-        $this->repository()->insert($resource);
+            context: $context,
+        ));
     }
 
     private function repository(): DomainRepository
     {
         return $this->repository ??= $this->orm()->repository(
             SchedulerRunHistoryResource::class,
-            SchedulerRunHistoryResource::class,
+            RunHistoryEntry::class,
         );
     }
 
