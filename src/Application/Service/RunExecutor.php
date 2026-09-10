@@ -61,6 +61,7 @@ final class RunExecutor
             'tenant' => $run->tenantId,
         ]);
         $outcome = 'failed';
+        $error = null;
 
         try {
             $payload = $run->payloadJson !== null
@@ -95,9 +96,18 @@ final class RunExecutor
             return RunExecutionResult::success();
         } catch (\Throwable $e) {
             $output?->writeln("<error>Run '{$run->id}' failed: {$e->getMessage()}</error>");
+            $error = mb_substr($e->getMessage(), 0, 200);
             return RunExecutionResult::failure($e->getMessage());
         } finally {
-            $tracer?->end('job', ['status' => $outcome]);
+            // The reason rides the end line so the live panel can say WHY a
+            // run failed when the cursor lands on it; the schedule key lets
+            // it pin the run to its cron row.
+            $tracer?->end('job', array_filter([
+                'status' => $outcome,
+                'error' => $error,
+                'schedule' => $run->scheduleKey,
+                'attempt' => $run->attemptCount,
+            ], static fn ($v) => $v !== null && $v !== ''));
             if ($run->tenantId !== null) {
                 CoroutineContextStore::swapFallback($previousContext);
             }
