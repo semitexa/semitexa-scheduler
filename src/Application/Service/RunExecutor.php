@@ -61,6 +61,7 @@ final class RunExecutor
             'tenant' => $run->tenantId,
         ]);
         $outcome = 'failed';
+        $error = null;
 
         try {
             $payload = $run->payloadJson !== null
@@ -95,9 +96,18 @@ final class RunExecutor
             return RunExecutionResult::success();
         } catch (\Throwable $e) {
             $output?->writeln("<error>Run '{$run->id}' failed: {$e->getMessage()}</error>");
+            $error = self::truncate($e->getMessage());
             return RunExecutionResult::failure($e->getMessage());
         } finally {
-            $tracer?->end('job', ['status' => $outcome]);
+            // The reason rides the end line so the live panel can say WHY a
+            // run failed when the cursor lands on it; the schedule key lets
+            // it pin the run to its cron row.
+            $tracer?->end('job', array_filter([
+                'status' => $outcome,
+                'error' => $error,
+                'schedule' => $run->scheduleKey,
+                'attempt' => $run->attemptCount,
+            ], static fn ($v) => $v !== null && $v !== ''));
             if ($run->tenantId !== null) {
                 CoroutineContextStore::swapFallback($previousContext);
             }
@@ -126,5 +136,20 @@ final class RunExecutor
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * Truncate for the journal without reaching for mbstring.
+     *
+     * ext-mbstring is not in this package's requirements, and this runs while
+     * a job failure is already being handled: a fatal here would escape
+     * execute() instead of returning RunExecutionResult::failure(), so the
+     * worker would never schedule the retry. PCRE's /u ships with PHP and does
+     * the same job; an invalid-UTF-8 subject makes preg_match fail rather than
+     * throw, and the byte-wise fallback covers it.
+     */
+    private static function truncate(string $text, int $limit = 200): string
+    {
+        return preg_match('/^.{0,' . $limit . '}/us', $text, $m) === 1 ? $m[0] : substr($text, 0, $limit);
     }
 }

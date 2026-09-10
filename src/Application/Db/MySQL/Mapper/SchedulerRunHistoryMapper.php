@@ -31,8 +31,13 @@ final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
             : json_decode($resourceModel->context_json, true);
 
         return new RunHistoryEntry(
-            id: $resourceModel->id === '' ? '' : Uuid7::fromBytes($resourceModel->id),
-            runId: $resourceModel->run_id === '' ? '' : Uuid7::fromBytes($resourceModel->run_id),
+            // The hydrator already turns BINARY(16) into the canonical string;
+            // converting again threw "Expected 16 bytes, got 36" and killed the
+            // scheduler worker on its first history row (tk-scheduler-history-
+            // uuid-roundtrip). Raw bytes are still accepted for a caller that
+            // hands them over unhydrated.
+            id: self::uuid($resourceModel->id),
+            runId: self::uuid($resourceModel->run_id),
             eventType: $resourceModel->event_type,
             fromStatus: $resourceModel->from_status,
             toStatus: $resourceModel->to_status,
@@ -63,5 +68,10 @@ final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
             created_at: $domainModel->getCreatedAt(),
             updated_at: $domainModel->getUpdatedAt(),
         );
+    }
+
+    private static function uuid(string $value): string
+    {
+        return strlen($value) === 16 ? Uuid7::fromBytes($value) : $value;
     }
 }
