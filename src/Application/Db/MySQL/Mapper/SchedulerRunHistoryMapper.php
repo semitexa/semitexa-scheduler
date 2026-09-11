@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Db\MySQL\Mapper;
 
-use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Orm\Attribute\AsMapper;
 use Semitexa\Orm\Domain\Contract\ResourceModelMapperInterface;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
@@ -13,10 +12,18 @@ use Semitexa\Scheduler\Domain\Model\RunHistoryEntry;
 /**
  * The bridge between the MySQL row and the history entry.
  *
- * Two real conversions, not naming: run ids are 16 raw bytes in the column and
- * a UUID string in the entry, and the event's detail is a JSON string in one and
- * an array in the other. Both are this table's storage choices, which is exactly
- * what a mapper is for.
+ * ONE real conversion: the event's detail is a JSON string in the column and an
+ * array in the entry. That is a storage shape no column type can express, which
+ * is exactly what a mapper is for.
+ *
+ * The ids are not the second one, however much they look like it. `id` and
+ * `run_id` are BINARY(16), and the ORM's TypeCaster converts that column type in
+ * both directions on its own. Converting it again here threw «Expected 16 bytes,
+ * got 36» on the first history row — and since the write engine maps every
+ * persisted row back to its domain model, EVERY scheduled job died on it,
+ * whichever job it was (tk-scheduler-history-uuid-roundtrip). The read side was
+ * fixed then; the write side stayed, working by accident, until
+ * `semitexa.mapperTypeConversion` made the whole shape refusable.
  */
 #[AsMapper(resourceModel: SchedulerRunHistoryResource::class, domainModel: RunHistoryEntry::class)]
 final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
@@ -31,13 +38,8 @@ final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
             : json_decode($resourceModel->context_json, true);
 
         return new RunHistoryEntry(
-            // The hydrator already turns BINARY(16) into the canonical string;
-            // converting again threw "Expected 16 bytes, got 36" and killed the
-            // scheduler worker on its first history row (tk-scheduler-history-
-            // uuid-roundtrip). Raw bytes are still accepted for a caller that
-            // hands them over unhydrated.
-            id: self::uuid($resourceModel->id),
-            runId: self::uuid($resourceModel->run_id),
+            id: $resourceModel->id,
+            runId: $resourceModel->run_id,
             eventType: $resourceModel->event_type,
             fromStatus: $resourceModel->from_status,
             toStatus: $resourceModel->to_status,
@@ -55,8 +57,8 @@ final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
         $domainModel instanceof RunHistoryEntry || throw new \InvalidArgumentException('Unexpected domain model.');
 
         return new SchedulerRunHistoryResource(
-            id: $domainModel->getId() === '' ? '' : Uuid7::toBytes($domainModel->getId()),
-            run_id: $domainModel->getRunId() === '' ? '' : Uuid7::toBytes($domainModel->getRunId()),
+            id: $domainModel->getId(),
+            run_id: $domainModel->getRunId(),
             event_type: $domainModel->getEventType(),
             from_status: $domainModel->getFromStatus(),
             to_status: $domainModel->getToStatus(),
@@ -68,10 +70,5 @@ final class SchedulerRunHistoryMapper implements ResourceModelMapperInterface
             created_at: $domainModel->getCreatedAt(),
             updated_at: $domainModel->getUpdatedAt(),
         );
-    }
-
-    private static function uuid(string $value): string
-    {
-        return strlen($value) === 16 ? Uuid7::fromBytes($value) : $value;
     }
 }
