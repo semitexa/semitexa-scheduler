@@ -8,10 +8,17 @@ use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Semitexa\Scheduler\Application\Db\MySQL\Mapper\ScheduleDefinitionMapper;
 use Semitexa\Scheduler\Application\Db\MySQL\Mapper\ScheduledRunMapper;
+use Semitexa\Orm\Adapter\MySqlType;
+use Semitexa\Orm\Application\Service\Hydration\TypeCaster;
+use Semitexa\Orm\Application\Service\Uuid7;
+use Semitexa\Orm\Domain\Model\ColumnDefinition;
 use Semitexa\Scheduler\Application\Db\MySQL\Mapper\SchedulerLockMapper;
+use Semitexa\Scheduler\Application\Db\MySQL\Mapper\SchedulerRunHistoryMapper;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerLockResource;
+use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunHistoryResource;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerScheduleDefinitionResource;
+use Semitexa\Scheduler\Domain\Model\RunHistoryEntry;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 use Semitexa\Scheduler\Domain\Model\SchedulerLock;
@@ -113,5 +120,93 @@ final class MapperRoundTripTest extends TestCase
 
         self::assertInstanceOf(SchedulerScheduleDefinitionResource::class, $resource);
         self::assertEquals($definition, $mapper->toDomain($resource));
+    }
+    /**
+     * The one the plain round trip could not catch.
+     *
+     * This mapper converted the BINARY(16) ids itself, in both directions — so
+     * mapper-out then mapper-in cancelled and any round-trip test stayed green
+     * while every scheduled job died in production. What sits between the two
+     * halves in real life is the ORM, which converts that column type ON ITS
+     * OWN: `castToDb` on the way in, `castFromDb` on the way out. Put the real
+     * TypeCaster in the middle and the failure is immediate — the mapper is
+     * handed the 36-character string the hydrator produced and Uuid7::fromBytes
+     * answers «Expected 16 bytes, got 36».
+     *
+     * Guarded going forward by `semitexa.mapperTypeConversion`, which refuses
+     * the call outright. This is the behavioural half of the same rule.
+     */
+    #[Test]
+    public function run_history_survives_the_conversions_the_orm_performs_around_it(): void
+    {
+        $entry = new RunHistoryEntry(
+            id: Uuid7::generate(),
+            runId: Uuid7::generate(),
+            eventType: 'status_changed',
+            fromStatus: 'queued',
+            toStatus: 'running',
+            workerId: 'worker-9',
+            message: 'claimed',
+            context: ['attempt' => 2],
+            createdAt: new \DateTimeImmutable('2026-07-04 00:00:03'),
+            updatedAt: new \DateTimeImmutable('2026-07-04 00:00:03'),
+        );
+
+        $mapper = new SchedulerRunHistoryMapper();
+        $resource = $mapper->toSourceModel($entry);
+
+        self::assertInstanceOf(SchedulerRunHistoryResource::class, $resource);
+
+        $caster = new TypeCaster();
+        $column = static fn (string $name): ColumnDefinition => new ColumnDefinition(
+            name: $name,
+            type: MySqlType::Binary,
+            phpType: 'string',
+            length: 16,
+        );
+
+        // What the write engine stores, and what the read path then hands back.
+        $storedId = $caster->castToDb($resource->id, $column('id'));
+        $storedRunId = $caster->castToDb($resource->run_id, $column('run_id'));
+
+        self::assertSame(16, strlen((string) $storedId), 'the column is BINARY(16) and must receive 16 bytes');
+        self::assertSame(16, strlen((string) $storedRunId));
+
+        $hydrated = new SchedulerRunHistoryResource(
+            id: (string) $caster->castFromDb($storedId, $column('id')),
+            run_id: (string) $caster->castFromDb($storedRunId, $column('run_id')),
+            event_type: $resource->event_type,
+            from_status: $resource->from_status,
+            to_status: $resource->to_status,
+            worker_id: $resource->worker_id,
+            message: $resource->message,
+            context_json: $resource->context_json,
+            created_at: $resource->created_at,
+            updated_at: $resource->updated_at,
+        );
+
+        self::assertEquals($entry, $mapper->toDomain($hydrated));
+    }
+
+    /** And the ordinary round trip, which the history mapper never had. */
+    #[Test]
+    public function run_history_round_trips_with_every_field_set(): void
+    {
+        $entry = new RunHistoryEntry(
+            id: Uuid7::generate(),
+            runId: Uuid7::generate(),
+            eventType: 'failed',
+            fromStatus: 'running',
+            toStatus: 'failed',
+            workerId: 'worker-1',
+            message: 'boom',
+            context: ['error' => 'boom', 'attempt' => 3],
+            createdAt: new \DateTimeImmutable('2026-07-04 00:01:00'),
+            updatedAt: new \DateTimeImmutable('2026-07-04 00:01:00'),
+        );
+
+        $mapper = new SchedulerRunHistoryMapper();
+
+        self::assertEquals($entry, $mapper->toDomain($mapper->toSourceModel($entry)));
     }
 }
