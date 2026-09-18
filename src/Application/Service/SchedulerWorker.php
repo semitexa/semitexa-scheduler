@@ -85,12 +85,12 @@ final class SchedulerWorker
     {
         $this->processRun($run, $workerId);
 
-        return $run->status === RunStatus::Succeeded->value;
+        return $run->getStatus() === RunStatus::Succeeded->value;
     }
 
     private function processRun(ScheduledRun $run, string $workerId): void
     {
-        $this->log("Processing run '{$run->id}' (job: {$run->jobClass})");
+        $this->log("Processing run '{$run->getId()}' (job: {$run->getJobClass()})");
 
         $overlapResult = $this->overlapHandler->handle($run, $workerId, $this->output);
 
@@ -101,38 +101,38 @@ final class SchedulerWorker
         $heartbeat = new LeaseHeartbeat(
             leaseManager: $this->leaseManager,
             lockManager: $this->lockManager,
-            runId: $run->id,
+            runId: $run->getId(),
             workerId: $workerId,
-            lockKey: $overlapResult->lockAcquired ? $run->lockKey : null,
+            lockKey: $overlapResult->lockAcquired ? $run->getLockKey() : null,
         );
 
         try {
             $result = $this->executor->execute($run, $workerId, $heartbeat, $this->output);
 
             if ($result->success) {
-                $run->status = RunStatus::Succeeded->value;
-                $run->finishedAt = new \DateTimeImmutable();
-                $run->leaseOwner = null;
-                $run->leaseExpiresAt = null;
+                $run->setStatus(RunStatus::Succeeded->value);
+                $run->setFinishedAt(new \DateTimeImmutable());
+                $run->setLeaseOwner(null);
+                $run->setLeaseExpiresAt(null);
                 $this->runRepository->save($run);
                 $this->historyRepository->append(
-                    $run->id, 'succeeded', 'running', RunStatus::Succeeded->value,
+                    $run->getId(), 'succeeded', 'running', RunStatus::Succeeded->value,
                     $workerId, 'Job completed successfully',
                 );
-                $this->log("Run '{$run->id}' succeeded.");
+                $this->log("Run '{$run->getId()}' succeeded.");
             } else {
                 $error = $result->error ?? 'Unknown error';
                 $retried = $this->retryScheduler->scheduleRetry($run, $workerId, $error);
                 if (!$retried) {
                     $this->retryScheduler->markFailed($run, $workerId, $error);
-                    $this->log("Run '{$run->id}' failed permanently: {$error}", 'error');
+                    $this->log("Run '{$run->getId()}' failed permanently: {$error}", 'error');
                 } else {
-                    $this->log("Run '{$run->id}' failed on attempt {$run->attemptCount}, retrying.", 'warning');
+                    $this->log("Run '{$run->getId()}' failed on attempt {$run->getAttemptCount()}, retrying.", 'warning');
                 }
             }
         } finally {
-            if ($overlapResult->lockAcquired && $run->lockKey !== null) {
-                $this->lockManager->release($run->lockKey, $workerId);
+            if ($overlapResult->lockAcquired && $run->getLockKey() !== null) {
+                $this->lockManager->release($run->getLockKey(), $workerId);
             }
         }
     }

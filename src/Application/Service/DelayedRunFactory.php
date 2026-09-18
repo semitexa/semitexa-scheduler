@@ -32,18 +32,18 @@ final class DelayedRunFactory
         }
 
         $run = new ScheduledRun();
-        $run->sourceType = SourceType::Delayed->value;
-        $run->jobClass = $jobClass;
-        $run->tenantId = $tenantId;
-        $run->pool = $pool;
-        $run->lockKey = $lockKey;
-        $run->status = RunStatus::Pending->value;
-        $run->scheduledFor = $scheduledFor;
-        $run->availableAt = $availableAt;
-        $run->maxAttempts = $maxAttempts;
-        $run->retryBackoffSeconds = $retryBackoffSeconds;
-        $run->payloadJson = $payload !== [] ? json_encode($payload, JSON_THROW_ON_ERROR) : null;
+        $run->setSourceType(SourceType::Delayed->value);
+        $run->setJobClass($jobClass);
+        $run->setTenantId($tenantId);
+        $run->setPool($pool);
+        $run->setLockKey($lockKey);
+        $run->setStatus(RunStatus::Pending->value);
+        $run->setScheduledFor($scheduledFor);
+        $run->setAvailableAt($availableAt);
+        $run->setMaxAttempts($maxAttempts);
+        $run->setRetryBackoffSeconds($retryBackoffSeconds);
+        $run->setPayloadJson($payload !== [] ? json_encode($payload, JSON_THROW_ON_ERROR) : null);
         $this->runRepository->save($run);
-        return $run->id;
+        return $run->getId();
     }
 }

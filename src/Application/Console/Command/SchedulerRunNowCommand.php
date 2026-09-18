@@ -88,7 +88,7 @@ final class SchedulerRunNowCommand extends Command
             }
 
             $now        = new \DateTimeImmutable();
-            $overlapPolicy = OverlapPolicy::from($definition->overlapPolicy);
+            $overlapPolicy = OverlapPolicy::from($definition->getOverlapPolicy());
             $effectiveTenantId = $tenantId ?? null;
 
             $lockKey = null;
@@ -99,17 +99,17 @@ final class SchedulerRunNowCommand extends Command
             }
 
             $run = new ScheduledRun();
-            $run->sourceType = SourceType::Delayed->value;
-            $run->scheduleKey = $scheduleKey;
-            $run->jobClass = $definition->jobClass;
-            $run->tenantId = $effectiveTenantId;
-            $run->pool = $definition->pool;
-            $run->lockKey = $lockKey;
-            $run->status = RunStatus::Pending->value;
-            $run->scheduledFor = $now;
-            $run->availableAt = $now;
-            $run->maxAttempts = $definition->maxAttempts;
-            $run->retryBackoffSeconds = $definition->retryBackoffSeconds;
+            $run->setSourceType(SourceType::Delayed->value);
+            $run->setScheduleKey($scheduleKey);
+            $run->setJobClass($definition->getJobClass());
+            $run->setTenantId($effectiveTenantId);
+            $run->setPool($definition->getPool());
+            $run->setLockKey($lockKey);
+            $run->setStatus(RunStatus::Pending->value);
+            $run->setScheduledFor($now);
+            $run->setAvailableAt($now);
+            $run->setMaxAttempts($definition->getMaxAttempts());
+            $run->setRetryBackoffSeconds($definition->getRetryBackoffSeconds());
 
             $this->runRepo->save($run);
 
@@ -117,7 +117,7 @@ final class SchedulerRunNowCommand extends Command
                 return $this->runInline($run, $io);
             }
 
-            $io->success("Created immediate run '{$run->id}' for '{$scheduleKey}'.");
+            $io->success("Created immediate run '{$run->getId()}' for '{$scheduleKey}'.");
         } catch (\Throwable $e) {
             $io->error('scheduler:run-now failed: ' . $e->getMessage());
             return Command::FAILURE;
@@ -152,12 +152,12 @@ final class SchedulerRunNowCommand extends Command
         $ok = $worker->processSingle($run, 'run-now-inline-' . getmypid());
 
         if ($ok) {
-            $io->success("Run '{$run->id}' executed inline and succeeded.");
+            $io->success("Run '{$run->getId()}' executed inline and succeeded.");
 
             return Command::SUCCESS;
         }
 
-        $io->error("Run '{$run->id}' executed inline and FAILED (status: {$run->status}). See scheduler history for the error.");
+        $io->error("Run '{$run->getId()}' executed inline and FAILED (status: {$run->getStatus()}). See scheduler history for the error.");
 
         return Command::FAILURE;
     }

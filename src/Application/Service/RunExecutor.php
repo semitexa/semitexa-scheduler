@@ -31,20 +31,20 @@ final class RunExecutor
         ?OutputInterface $output = null,
     ): RunExecutionResult {
         // Mark as running and increment attempt count
-        $run->status = RunStatus::Running->value;
-        $run->startedAt = new \DateTimeImmutable();
-        $run->attemptCount++;
+        $run->setStatus(RunStatus::Running->value);
+        $run->setStartedAt(new \DateTimeImmutable());
+        $run->setAttemptCount($run->getAttemptCount() + 1);
         $this->runRepository->save($run);
 
         $this->historyRepository->append(
-            $run->id, 'running', 'claimed', RunStatus::Running->value,
-            $workerId, "Attempt {$run->attemptCount}/{$run->maxAttempts}",
+            $run->getId(), 'running', 'claimed', RunStatus::Running->value,
+            $workerId, "Attempt {$run->getAttemptCount()}/{$run->getMaxAttempts()}",
         );
 
         // Switch tenant context for tenant-bound runs
         $previousContext = null;
-        if ($run->tenantId !== null) {
-            $newContext = TenantContext::fromResolution($run->tenantId, 'scheduler');
+        if ($run->getTenantId() !== null) {
+            $newContext = TenantContext::fromResolution($run->getTenantId(), 'scheduler');
             $previousContext = CoroutineContextStore::swapFallback($newContext);
         }
 
@@ -55,27 +55,27 @@ final class RunExecutor
         $tracer = $this->resolveTracer();
         $tracer?->begin('job', [
             'kind' => 'scheduler',
-            'route' => $run->jobClass,
-            'path' => $run->id,
-            'attempt' => $run->attemptCount,
-            'tenant' => $run->tenantId,
+            'route' => $run->getJobClass(),
+            'path' => $run->getId(),
+            'attempt' => $run->getAttemptCount(),
+            'tenant' => $run->getTenantId(),
         ]);
         $outcome = 'failed';
         $error = null;
 
         try {
-            $payload = $run->payloadJson !== null
-                ? json_decode($run->payloadJson, true, 512, JSON_THROW_ON_ERROR)
+            $payload = $run->getPayloadJson() !== null
+                ? json_decode($run->getPayloadJson(), true, 512, JSON_THROW_ON_ERROR)
                 : [];
 
             $context = new ScheduledJobContext(
-                runId: $run->id,
-                jobClass: $run->jobClass,
-                pool: $run->pool,
-                tenantId: $run->tenantId,
-                scheduleKey: $run->scheduleKey,
-                sourceType: $run->sourceType,
-                attemptNumber: $run->attemptCount,
+                runId: $run->getId(),
+                jobClass: $run->getJobClass(),
+                pool: $run->getPool(),
+                tenantId: $run->getTenantId(),
+                scheduleKey: $run->getScheduleKey(),
+                sourceType: $run->getSourceType(),
+                attemptNumber: $run->getAttemptCount(),
                 payload: $payload,
             );
 
@@ -86,16 +86,16 @@ final class RunExecutor
             // carry #[AsService] alongside #[AsScheduledJob] to be resolvable.
             $container = ContainerFactory::get();
             /** @var ScheduledJobInterface $job */
-            $job = $container->get($run->jobClass);
+            $job = $container->get($run->getJobClass());
             $job->handle($context);
 
-            $output?->writeln("<info>Run '{$run->id}' executed successfully (attempt {$run->attemptCount}).</info>");
+            $output?->writeln("<info>Run '{$run->getId()}' executed successfully (attempt {$run->getAttemptCount()}).</info>");
 
             $outcome = 'success';
 
             return RunExecutionResult::success();
         } catch (\Throwable $e) {
-            $output?->writeln("<error>Run '{$run->id}' failed: {$e->getMessage()}</error>");
+            $output?->writeln("<error>Run '{$run->getId()}' failed: {$e->getMessage()}</error>");
             $error = self::truncate($e->getMessage());
             return RunExecutionResult::failure($e->getMessage());
         } finally {
@@ -105,10 +105,10 @@ final class RunExecutor
             $tracer?->end('job', array_filter([
                 'status' => $outcome,
                 'error' => $error,
-                'schedule' => $run->scheduleKey,
-                'attempt' => $run->attemptCount,
+                'schedule' => $run->getScheduleKey(),
+                'attempt' => $run->getAttemptCount(),
             ], static fn ($v) => $v !== null && $v !== ''));
-            if ($run->tenantId !== null) {
+            if ($run->getTenantId() !== null) {
                 CoroutineContextStore::swapFallback($previousContext);
             }
         }
