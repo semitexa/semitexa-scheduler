@@ -22,23 +22,23 @@ final class RetryScheduler
      */
     public function scheduleRetry(ScheduledRun $run, string $workerId, string $errorMessage): bool
     {
-        $policy = new RetryPolicy($run->maxAttempts, $run->retryBackoffSeconds);
+        $policy = new RetryPolicy($run->getMaxAttempts(), $run->getRetryBackoffSeconds());
 
-        if (!$policy->shouldRetry($run->attemptCount)) {
+        if (!$policy->shouldRetry($run->getAttemptCount())) {
             return false;
         }
 
-        $run->status = RunStatus::RetryScheduled->value;
-        $run->availableAt = $policy->nextAvailableAt($run->attemptCount);
-        $run->lastError = $errorMessage;
-        $run->leaseOwner = null;
-        $run->leaseExpiresAt = null;
+        $run->setStatus(RunStatus::RetryScheduled->value);
+        $run->setAvailableAt($policy->nextAvailableAt($run->getAttemptCount()));
+        $run->setLastError($errorMessage);
+        $run->setLeaseOwner(null);
+        $run->setLeaseExpiresAt(null);
         $this->runRepository->save($run);
 
         $this->historyRepository->append(
-            $run->id, 'retry_scheduled', 'running', RunStatus::RetryScheduled->value,
-            $workerId, "Retry {$run->attemptCount}/{$run->maxAttempts}: {$errorMessage}",
-            ['attempt_count' => $run->attemptCount, 'next_available_at' => $run->availableAt?->format('c')],
+            $run->getId(), 'retry_scheduled', 'running', RunStatus::RetryScheduled->value,
+            $workerId, "Retry {$run->getAttemptCount()}/{$run->getMaxAttempts()}: {$errorMessage}",
+            ['attempt_count' => $run->getAttemptCount(), 'next_available_at' => $run->getAvailableAt()?->format('c')],
         );
 
         return true;
@@ -46,17 +46,17 @@ final class RetryScheduler
 
     public function markFailed(ScheduledRun $run, string $workerId, string $errorMessage): void
     {
-        $run->status = RunStatus::Failed->value;
-        $run->lastError = $errorMessage;
-        $run->finishedAt = new \DateTimeImmutable();
-        $run->leaseOwner = null;
-        $run->leaseExpiresAt = null;
+        $run->setStatus(RunStatus::Failed->value);
+        $run->setLastError($errorMessage);
+        $run->setFinishedAt(new \DateTimeImmutable());
+        $run->setLeaseOwner(null);
+        $run->setLeaseExpiresAt(null);
         $this->runRepository->save($run);
 
         $this->historyRepository->append(
-            $run->id, 'failed', 'running', RunStatus::Failed->value,
-            $workerId, "Terminal failure after {$run->attemptCount} attempt(s): {$errorMessage}",
-            ['attempt_count' => $run->attemptCount],
+            $run->getId(), 'failed', 'running', RunStatus::Failed->value,
+            $workerId, "Terminal failure after {$run->getAttemptCount()} attempt(s): {$errorMessage}",
+            ['attempt_count' => $run->getAttemptCount()],
         );
     }
 }

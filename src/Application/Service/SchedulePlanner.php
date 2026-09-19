@@ -37,13 +37,13 @@ final class SchedulePlanner
 
     private function planDefinition(ScheduleDefinition $definition, \DateTimeImmutable $now, ?OutputInterface $output): int
     {
-        $from = $definition->planningCursorAt ?? $now->modify('-1 minute');
+        $from = $definition->getPlanningCursorAt() ?? $now->modify('-1 minute');
 
         $occurrences = $this->calculator->getOccurrencesBetween(
-            expression: $definition->cronExpression,
+            expression: $definition->getCronExpression(),
             from: $from,
             until: $now,
-            timezone: $definition->timezone,
+            timezone: $definition->getTimezone(),
         );
 
         if ($occurrences === []) {
@@ -52,16 +52,16 @@ final class SchedulePlanner
 
         $toSchedule = $this->misfireResolver->resolve(
             missedOccurrences: $occurrences,
-            policy: MisfirePolicy::from($definition->misfirePolicy),
-            maxCatchUpRuns: $definition->maxCatchUpRuns,
+            policy: MisfirePolicy::from($definition->getMisfirePolicy()),
+            maxCatchUpRuns: $definition->getMaxCatchUpRuns(),
         );
 
-        $tenantMode = TenantScheduleMode::from($definition->tenantMode);
+        $tenantMode = TenantScheduleMode::from($definition->getTenantMode());
         $planned = 0;
 
         foreach ($toSchedule as $scheduledFor) {
             $base = new ScheduledOccurrence(
-                scheduleKey: $definition->scheduleKey,
+                scheduleKey: $definition->getScheduleKey(),
                 scheduledFor: $scheduledFor,
             );
             foreach ($this->tenantExpander->expand($base, $tenantMode) as $occurrence) {
@@ -71,7 +71,7 @@ final class SchedulePlanner
 
         // Advance cursor to the last computed occurrence (whether or not runs were created)
         $this->definitionRepository->advancePlanningCursor(
-            $definition->scheduleKey,
+            $definition->getScheduleKey(),
             $occurrences[count($occurrences) - 1],
         );
 
@@ -86,29 +86,29 @@ final class SchedulePlanner
             return 0; // Idempotency: already planned
         }
 
-        $overlapPolicy = OverlapPolicy::from($definition->overlapPolicy);
+        $overlapPolicy = OverlapPolicy::from($definition->getOverlapPolicy());
         $lockKey = $overlapPolicy !== OverlapPolicy::Allow ? $occurrence->lockKey() : null;
 
         $run = new ScheduledRun();
-        $run->sourceType = SourceType::Recurring->value;
-        $run->scheduleKey = $definition->scheduleKey;
-        $run->occurrenceKey = $occurrenceKey;
-        $run->jobClass = $definition->jobClass;
-        $run->tenantId = $occurrence->tenantId;
-        $run->pool = $definition->pool;
-        $run->lockKey = $lockKey;
-        $run->status = RunStatus::Pending->value;
-        $run->scheduledFor = $occurrence->scheduledFor;
-        $run->availableAt = $occurrence->scheduledFor;
-        $run->maxAttempts = $definition->maxAttempts;
-        $run->retryBackoffSeconds = $definition->retryBackoffSeconds;
+        $run->setSourceType(SourceType::Recurring->value);
+        $run->setScheduleKey($definition->getScheduleKey());
+        $run->setOccurrenceKey($occurrenceKey);
+        $run->setJobClass($definition->getJobClass());
+        $run->setTenantId($occurrence->tenantId);
+        $run->setPool($definition->getPool());
+        $run->setLockKey($lockKey);
+        $run->setStatus(RunStatus::Pending->value);
+        $run->setScheduledFor($occurrence->scheduledFor);
+        $run->setAvailableAt($occurrence->scheduledFor);
+        $run->setMaxAttempts($definition->getMaxAttempts());
+        $run->setRetryBackoffSeconds($definition->getRetryBackoffSeconds());
 
         $this->runRepository->save($run);
 
         $output?->writeln(sprintf(
             '  Planned %s for <info>%s</info> at %s',
-            $run->id,
-            $definition->scheduleKey,
+            $run->getId(),
+            $definition->getScheduleKey(),
             $occurrence->scheduledFor->format('Y-m-d H:i:s'),
         ));
 

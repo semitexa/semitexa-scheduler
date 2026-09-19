@@ -103,8 +103,8 @@ final class SchedulerLockLifecycleTest extends TestCase
         $lock = $this->repository->findByKey('job:a');
 
         self::assertNotNull($lock);
-        self::assertSame('job:a', $lock->lockKey);
-        self::assertSame('w-1', $lock->workerId);
+        self::assertSame('job:a', $lock->getLockKey());
+        self::assertSame('w-1', $lock->getWorkerId());
     }
 
     #[Test]

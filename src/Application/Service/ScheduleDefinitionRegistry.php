@@ -57,16 +57,16 @@ final class ScheduleDefinitionRegistry
 
             $existing = $this->repository()->findByKey($attr->key);
             $definition = $existing ?? new ScheduleDefinition();
-            $definition->scheduleKey = $attr->key;
-            $definition->jobClass = $class;
-            $definition->cronExpression = $cron;
-            $definition->pool = $attr->pool;
-            $definition->overlapPolicy = $attr->overlapPolicy;
-            $definition->misfirePolicy = $attr->misfirePolicy;
-            $definition->tenantMode = $attr->tenantMode;
-            $definition->maxAttempts = $attr->maxAttempts;
-            $definition->retryBackoffSeconds = $attr->retryBackoffSeconds;
-            $definition->maxCatchUpRuns = $attr->maxCatchUpRuns;
+            $definition->setScheduleKey($attr->key);
+            $definition->setJobClass($class);
+            $definition->setCronExpression($cron);
+            $definition->setPool($attr->pool);
+            $definition->setOverlapPolicy($attr->overlapPolicy);
+            $definition->setMisfirePolicy($attr->misfirePolicy);
+            $definition->setTenantMode($attr->tenantMode);
+            $definition->setMaxAttempts($attr->maxAttempts);
+            $definition->setRetryBackoffSeconds($attr->retryBackoffSeconds);
+            $definition->setMaxCatchUpRuns($attr->maxCatchUpRuns);
             $this->repository()->save($definition);
         }
 

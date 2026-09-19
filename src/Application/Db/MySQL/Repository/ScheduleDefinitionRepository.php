@@ -41,7 +41,7 @@ final class ScheduleDefinitionRepository implements ScheduleDefinitionRepository
 
     public function save(ScheduleDefinition $entity): void
     {
-        $persisted = $entity->id === ''
+        $persisted = $entity->getId() === ''
             ? $this->repository()->insert($entity)
             : $this->repository()->update($entity);
 
@@ -55,8 +55,8 @@ final class ScheduleDefinitionRepository implements ScheduleDefinitionRepository
             return;
         }
 
-        $definition->planningCursorAt = $cursor;
-        $definition->lastPlannedAt = new \DateTimeImmutable();
+        $definition->setPlanningCursorAt($cursor);
+        $definition->setLastPlannedAt(new \DateTimeImmutable());
         $this->repository()->update($definition);
     }
 

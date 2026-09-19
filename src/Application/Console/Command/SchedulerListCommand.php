@@ -45,21 +45,21 @@ final class SchedulerListCommand extends Command
 
             foreach ($definitions as $def) {
                 try {
-                    $next = $calculator->getNextOccurrence($def->cronExpression, $now, $def->timezone);
-                    $nextStr = $next->format('Y-m-d H:i:s') . ' (' . $def->timezone . ')';
+                    $next = $calculator->getNextOccurrence($def->getCronExpression(), $now, $def->getTimezone());
+                    $nextStr = $next->format('Y-m-d H:i:s') . ' (' . $def->getTimezone() . ')';
                 } catch (\Throwable) {
                     $nextStr = '(invalid expression)';
                 }
 
                 $rows[] = [
-                    $def->scheduleKey,
-                    $def->cronExpression,
+                    $def->getScheduleKey(),
+                    $def->getCronExpression(),
                     $nextStr,
-                    $def->pool,
-                    $def->overlapPolicy,
-                    $def->misfirePolicy,
-                    $def->tenantMode,
-                    $def->planningCursorAt?->format('Y-m-d H:i:s') ?? 'never',
+                    $def->getPool(),
+                    $def->getOverlapPolicy(),
+                    $def->getMisfirePolicy(),
+                    $def->getTenantMode(),
+                    $def->getPlanningCursorAt()?->format('Y-m-d H:i:s') ?? 'never',
                 ];
             }
 

@@ -38,7 +38,7 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
 
     public function save(ScheduledRun $entity): void
     {
-        $persisted = $entity->id === ''
+        $persisted = $entity->getId() === ''
             ? $this->repository()->insert($entity)
             : $this->repository()->update($entity);
 

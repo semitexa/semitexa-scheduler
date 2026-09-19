@@ -29,11 +29,11 @@ final class OverlapPolicyHandler
         string $workerId,
         ?OutputInterface $output = null,
     ): OverlapHandleResult {
-        if ($run->lockKey === null) {
+        if ($run->getLockKey() === null) {
             return new OverlapHandleResult(proceed: true, lockAcquired: false);
         }
 
-        $acquired = $this->lockManager->acquire($run->lockKey, $run->id, $workerId);
+        $acquired = $this->lockManager->acquire($run->getLockKey(), $run->getId(), $workerId);
 
         if ($acquired) {
             return new OverlapHandleResult(proceed: true, lockAcquired: true);
@@ -43,39 +43,39 @@ final class OverlapPolicyHandler
         $policy = $this->resolvePolicy($run);
 
         if ($policy === OverlapPolicy::Delay) {
-            $delay = max(30, $run->retryBackoffSeconds > 0 ? $run->retryBackoffSeconds : 30);
-            $run->status = RunStatus::RetryScheduled->value;
-            $run->availableAt = (new \DateTimeImmutable())->modify("+{$delay} seconds");
-            $run->leaseOwner = null;
-            $run->leaseExpiresAt = null;
+            $delay = max(30, $run->getRetryBackoffSeconds() > 0 ? $run->getRetryBackoffSeconds() : 30);
+            $run->setStatus(RunStatus::RetryScheduled->value);
+            $run->setAvailableAt((new \DateTimeImmutable())->modify("+{$delay} seconds"));
+            $run->setLeaseOwner(null);
+            $run->setLeaseExpiresAt(null);
             $this->runRepository->save($run);
             $this->historyRepository->append(
-                $run->id, 'overlap_delayed', 'claimed', RunStatus::RetryScheduled->value,
-                $workerId, "Lock '{$run->lockKey}' held — retrying in {$delay}s",
+                $run->getId(), 'overlap_delayed', 'claimed', RunStatus::RetryScheduled->value,
+                $workerId, "Lock '{$run->getLockKey()}' held — retrying in {$delay}s",
             );
-            $output?->writeln("<comment>Run '{$run->id}' delayed (lock held), retry in {$delay}s.</comment>");
+            $output?->writeln("<comment>Run '{$run->getId()}' delayed (lock held), retry in {$delay}s.</comment>");
             return new OverlapHandleResult(proceed: false, lockAcquired: false);
         }
 
         // Default: Skip
-        $run->status = RunStatus::SkippedOverlap->value;
-        $run->leaseOwner = null;
-        $run->leaseExpiresAt = null;
+        $run->setStatus(RunStatus::SkippedOverlap->value);
+        $run->setLeaseOwner(null);
+        $run->setLeaseExpiresAt(null);
         $this->runRepository->save($run);
         $this->historyRepository->append(
-            $run->id, 'skipped_overlap', 'claimed', RunStatus::SkippedOverlap->value,
-            $workerId, "Lock '{$run->lockKey}' already held",
+            $run->getId(), 'skipped_overlap', 'claimed', RunStatus::SkippedOverlap->value,
+            $workerId, "Lock '{$run->getLockKey()}' already held",
         );
-        $output?->writeln("<comment>Run '{$run->id}' skipped (lock held).</comment>");
+        $output?->writeln("<comment>Run '{$run->getId()}' skipped (lock held).</comment>");
         return new OverlapHandleResult(proceed: false, lockAcquired: false);
     }
 
     private function resolvePolicy(ScheduledRun $run): OverlapPolicy
     {
-        if ($run->scheduleKey !== null) {
-            $definition = $this->definitionRepository->findByKey($run->scheduleKey);
+        if ($run->getScheduleKey() !== null) {
+            $definition = $this->definitionRepository->findByKey($run->getScheduleKey());
             if ($definition !== null) {
-                return OverlapPolicy::from($definition->overlapPolicy);
+                return OverlapPolicy::from($definition->getOverlapPolicy());
             }
         }
         return OverlapPolicy::Skip;

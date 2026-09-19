@@ -33,14 +33,14 @@ final class SchedulerLockMapper implements ResourceModelMapperInterface
         $domainModel instanceof SchedulerLock || throw new \InvalidArgumentException('Unexpected domain model.');
 
         return new SchedulerLockResource(
-            id: $domainModel->id,
-            lock_key: $domainModel->lockKey,
-            run_id: $domainModel->runId,
-            worker_id: $domainModel->workerId,
-            acquired_at: $domainModel->acquiredAt,
-            expires_at: $domainModel->expiresAt,
-            created_at: $domainModel->createdAt,
-            updated_at: $domainModel->updatedAt,
+            id: $domainModel->getId(),
+            lock_key: $domainModel->getLockKey(),
+            run_id: $domainModel->getRunId(),
+            worker_id: $domainModel->getWorkerId(),
+            acquired_at: $domainModel->getAcquiredAt(),
+            expires_at: $domainModel->getExpiresAt(),
+            created_at: $domainModel->getCreatedAt(),
+            updated_at: $domainModel->getUpdatedAt(),
         );
     }
 }
