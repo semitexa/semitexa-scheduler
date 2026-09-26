@@ -10,6 +10,7 @@ use Semitexa\Orm\Adapter\QueryResult;
 use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Scheduler\Application\Db\MySQL\Repository\ScheduledRunRepository;
 use Semitexa\Scheduler\Application\Db\MySQL\Repository\SchedulerLockRepository;
+use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Tests\Support\RecordingAdapter;
 use Semitexa\Scheduler\Tests\Support\RepositoryHarness;
 
@@ -47,6 +48,27 @@ final class LeaseRenewalOwnershipTest extends TestCase
     public function a_lock_extension_by_a_worker_that_no_longer_holds_it_fails(): void
     {
         self::assertFalse($this->lockRepository(ownerRowExists: false)->extend('job:a', 'w-1', 120));
+    }
+
+    #[Test]
+    public function an_outcome_written_by_the_owner_that_changes_nothing_still_counts(): void
+    {
+        self::assertTrue($this->runRepository(ownerRowExists: true)->finalizeIfOwned($this->succeededRun(), 'w-1'));
+    }
+
+    #[Test]
+    public function an_outcome_written_by_a_worker_that_no_longer_owns_the_run_is_refused(): void
+    {
+        self::assertFalse($this->runRepository(ownerRowExists: false)->finalizeIfOwned($this->succeededRun(), 'w-1'));
+    }
+
+    private function succeededRun(): ScheduledRun
+    {
+        $run = new ScheduledRun();
+        $run->setId(Uuid7::generate());
+        $run->setStatus('succeeded');
+
+        return $run;
     }
 
     private function runRepository(bool $ownerRowExists): ScheduledRunRepository

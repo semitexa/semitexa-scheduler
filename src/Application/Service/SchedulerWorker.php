@@ -9,6 +9,7 @@ use Semitexa\Scheduler\Configuration\SchedulerConfig;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Domain\Enum\RunStatus;
+use Semitexa\Scheduler\Domain\Exception\LeaseLostException;
 use Semitexa\Scheduler\Application\Service\RunLeaseManager;
 use Semitexa\Scheduler\Application\Service\SchedulerLockManager;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -110,11 +111,14 @@ final class SchedulerWorker
             $result = $this->executor->execute($run, $workerId, $heartbeat, $this->output);
 
             if ($result->success) {
+                $owner = $run->getLeaseOwner();
                 $run->setStatus(RunStatus::Succeeded->value);
                 $run->setFinishedAt(new \DateTimeImmutable());
                 $run->setLeaseOwner(null);
                 $run->setLeaseExpiresAt(null);
-                $this->runRepository->save($run);
+                if (!$this->runRepository->finalizeIfOwned($run, $owner)) {
+                    throw LeaseLostException::forRun($run->getId(), $workerId);
+                }
                 $this->historyRepository->append(
                     $run->getId(), 'succeeded', 'running', RunStatus::Succeeded->value,
                     $workerId, 'Job completed successfully',
@@ -130,6 +134,10 @@ final class SchedulerWorker
                     $this->log("Run '{$run->getId()}' failed on attempt {$run->getAttemptCount()}, retrying.", 'warning');
                 }
             }
+        } catch (LeaseLostException $e) {
+            // Another worker took the run over while this one was executing
+            // it; the outcome is theirs to record, so this one writes nothing.
+            $this->log("Run '{$run->getId()}' outcome discarded: {$e->getMessage()}", 'warning');
         } finally {
             if ($overlapResult->lockAcquired && $run->getLockKey() !== null) {
                 $this->lockManager->release($run->getLockKey(), $workerId);

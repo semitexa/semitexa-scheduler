@@ -27,6 +27,15 @@ interface ScheduledRunRepositoryInterface
     public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool;
 
     /**
+     * Persist a run's outcome (status, available_at, last_error, finished_at
+     * and the cleared lease) only while the row's lease_owner is still
+     * $expectedOwner — the owner the run carried when this worker took it
+     * (null for an unleased inline run). Returns false and writes nothing
+     * when another worker has reclaimed or taken over the run since.
+     */
+    public function finalizeIfOwned(ScheduledRun $run, ?string $expectedOwner): bool;
+
+    /**
      * Reclaim runs whose lease has expired (crash recovery).
      * Returns the number of rows reclaimed back to pending.
      */

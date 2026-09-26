@@ -132,6 +132,48 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
         )->rows !== [];
     }
 
+    public function finalizeIfOwned(ScheduledRun $run, ?string $expectedOwner): bool
+    {
+        $binId = Uuid7::toBytes($run->getId());
+        [$ownerGuard, $guardParams] = $expectedOwner === null
+            ? ['lease_owner IS NULL', []]
+            : ['lease_owner = :owner', ['owner' => $expectedOwner]];
+
+        $result = $this->adapter()->execute(
+            "UPDATE scheduler_runs
+             SET status = :status,
+                 available_at = :available_at,
+                 last_error = :last_error,
+                 finished_at = :finished_at,
+                 lease_owner = :new_owner,
+                 lease_expires_at = :lease_until,
+                 updated_at = :now_upd
+             WHERE id = :id AND {$ownerGuard}",
+            [
+                'status' => $run->getStatus(),
+                'available_at' => $run->getAvailableAt()?->format('Y-m-d H:i:s.u'),
+                'last_error' => $run->getLastError(),
+                'finished_at' => $run->getFinishedAt()?->format('Y-m-d H:i:s.u'),
+                'new_owner' => $run->getLeaseOwner(),
+                'lease_until' => $run->getLeaseExpiresAt()?->format('Y-m-d H:i:s.u'),
+                'now_upd' => (new \DateTimeImmutable())->format('Y-m-d H:i:s.u'),
+                'id' => $binId,
+            ] + $guardParams,
+        );
+
+        if ($result->rowCount > 0) {
+            return true;
+        }
+
+        // Same MySQL caveat as renewLease(): 0 CHANGED rows also covers a
+        // matched row that already held these values. Only a row that fails
+        // the ownership guard means the run now belongs to someone else.
+        return $this->adapter()->execute(
+            "SELECT 1 FROM scheduler_runs WHERE id = :id AND {$ownerGuard}",
+            ['id' => $binId] + $guardParams,
+        )->rows !== [];
+    }
+
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
         $nowStr = $now->format('Y-m-d H:i:s.u');
