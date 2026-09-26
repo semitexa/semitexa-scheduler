@@ -15,5 +15,22 @@ final readonly class ScheduledJobContext
         public string $sourceType = 'delayed',
         public int $attemptNumber = 1,
         public array $payload = [],
+        private ?\Closure $renewLease = null,
     ) {}
+
+    /**
+     * Keep this run's lease (and overlap lock) alive. The worker does not renew
+     * it on its own, so a job that can outlast the lease TTL must call this at
+     * natural checkpoints — otherwise another worker reclaims the "expired"
+     * lease and runs the same job a second time, concurrently.
+     *
+     * @throws \Semitexa\Scheduler\Domain\Exception\LeaseLostException when the
+     *         lease was already lost; let it propagate so the run stops here.
+     */
+    public function renewLease(): void
+    {
+        if ($this->renewLease !== null) {
+            ($this->renewLease)();
+        }
+    }
 }

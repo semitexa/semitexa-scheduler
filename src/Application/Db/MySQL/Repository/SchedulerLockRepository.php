@@ -92,7 +92,16 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
             ['expires' => $expires, 'now' => $nowStr, 'lock_key' => $lockKey, 'worker_id' => $workerId],
         );
 
-        return $result->rowCount > 0;
+        if ($result->rowCount > 0) {
+            return true;
+        }
+
+        // Same-second re-extension changes nothing on a whole-second DATETIME,
+        // and MySQL then reports 0 affected rows; confirm ownership instead.
+        return $this->adapter()->execute(
+            'SELECT 1 FROM scheduler_locks WHERE lock_key = :lock_key AND worker_id = :worker_id',
+            ['lock_key' => $lockKey, 'worker_id' => $workerId],
+        )->rows !== [];
     }
 
     public function release(string $lockKey, string $workerId): void
