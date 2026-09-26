@@ -77,6 +77,7 @@ final class RunExecutor
                 sourceType: $run->getSourceType(),
                 attemptNumber: $run->getAttemptCount(),
                 payload: $payload,
+                renewLease: $heartbeat->tick(...),
             );
 
             // Dynamic dispatch: the job class name lives in a DB row, so
