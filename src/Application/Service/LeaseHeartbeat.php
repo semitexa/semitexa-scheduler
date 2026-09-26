@@ -6,6 +6,7 @@ namespace Semitexa\Scheduler\Application\Service;
 
 use Semitexa\Scheduler\Application\Service\RunLeaseManager;
 use Semitexa\Scheduler\Application\Service\SchedulerLockManager;
+use Semitexa\Scheduler\Domain\Exception\LeaseLostException;
 
 /**
  * Provides a tick() method for renewing lease and lock during long-running job execution.
@@ -21,12 +22,18 @@ final class LeaseHeartbeat
         private readonly ?string $lockKey,
     ) {}
 
+    /**
+     * @throws LeaseLostException when this worker no longer owns the lease or
+     *         the lock — the job must stop rather than run beside its new owner.
+     */
     public function tick(): void
     {
-        $this->leaseManager->renewLease($this->runId, $this->workerId);
+        if (!$this->leaseManager->renewLease($this->runId, $this->workerId)) {
+            throw LeaseLostException::forRun($this->runId, $this->workerId);
+        }
 
-        if ($this->lockKey !== null) {
-            $this->lockManager->extend($this->lockKey, $this->workerId);
+        if ($this->lockKey !== null && !$this->lockManager->extend($this->lockKey, $this->workerId)) {
+            throw LeaseLostException::forLock($this->lockKey, $this->workerId);
         }
     }
 }

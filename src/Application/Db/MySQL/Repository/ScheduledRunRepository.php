@@ -118,7 +118,18 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
             ],
         );
 
-        return $result->rowCount > 0;
+        if ($result->rowCount > 0) {
+            return true;
+        }
+
+        // MySQL reports CHANGED rows, and the DATETIME columns keep whole
+        // seconds: a second renewal within the same second changes nothing and
+        // reports 0 even though this worker still owns the lease. Only a
+        // missing ownership row means the lease was lost.
+        return $this->adapter()->execute(
+            'SELECT 1 FROM scheduler_runs WHERE id = :id AND lease_owner = :worker',
+            ['id' => $binId, 'worker' => $workerId],
+        )->rows !== [];
     }
 
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
