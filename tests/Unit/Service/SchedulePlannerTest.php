@@ -175,16 +175,23 @@ final class PlannerRuns implements ScheduledRunRepositoryInterface
     /** @return list<string> H:i in UTC, in planning order */
     public function times(): array
     {
-        return array_map(static fn (ScheduledRun $r): string => $r->getScheduledFor()->setTimezone(new \DateTimeZone('UTC'))->format('H:i'), $this->all());
+        return array_map(self::utcTime(...), $this->all());
     }
 
     /** @return list<string> */
     public function timesFor(string $scheduleKey): array
     {
         return array_values(array_map(
-            static fn (ScheduledRun $r): string => $r->getScheduledFor()->setTimezone(new \DateTimeZone('UTC'))->format('H:i'),
+            self::utcTime(...),
             array_filter($this->all(), static fn (ScheduledRun $r): bool => $r->getScheduleKey() === $scheduleKey),
         ));
+    }
+
+    private static function utcTime(ScheduledRun $run): string
+    {
+        $at = $run->getScheduledFor() ?? throw new \LogicException('A planned run has no scheduledFor.');
+
+        return $at->setTimezone(new \DateTimeZone('UTC'))->format('H:i');
     }
 
     public function findById(string $id): ?ScheduledRun
