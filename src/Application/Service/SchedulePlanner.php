@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Service;
 
+use Semitexa\Core\Log\StaticLoggerBridge;
 use Semitexa\Orm\Exception\ConstraintViolationException;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
@@ -51,12 +52,17 @@ final class SchedulePlanner
             return 0;
         }
 
+        $policy = MisfirePolicy::from($definition->getMisfirePolicy());
         $toSchedule = $this->misfireResolver->resolve(
             occurrences: $occurrences,
-            policy: MisfirePolicy::from($definition->getMisfirePolicy()),
+            policy: $policy,
             now: $now,
             maxCatchUpRuns: $definition->getMaxCatchUpRuns(),
         );
+        $this->reportDropped($definition, $policy, array_values(array_filter(
+            $occurrences,
+            static fn (\DateTimeImmutable $at): bool => !in_array($at, $toSchedule, false),
+        )), $now, $output);
 
         $tenantMode = TenantScheduleMode::from($definition->getTenantMode());
         $planned = 0;
@@ -78,6 +84,48 @@ final class SchedulePlanner
         );
 
         return $planned;
+    }
+
+    /**
+     * Say what the misfire policy dropped. A run lost to a restart gap just
+     * over the on-time threshold otherwise looks exactly like a schedule with
+     * nothing due. One entry per schedule, however long the outage.
+     *
+     * @param list<\DateTimeImmutable> $dropped sorted ascending
+     */
+    private function reportDropped(ScheduleDefinition $definition, MisfirePolicy $policy, array $dropped, \DateTimeImmutable $now, ?OutputInterface $output): void
+    {
+        if ($dropped === []) {
+            return;
+        }
+
+        $oldest = $dropped[0];
+        $newest = $dropped[count($dropped) - 1];
+        $late = static fn (\DateTimeImmutable $at): int => $now->getTimestamp() - $at->getTimestamp();
+        $key = $definition->getScheduleKey();
+        $message = count($dropped) === 1
+            ? sprintf("Schedule '%s' (misfirePolicy %s) dropped 1 missed occurrence: %s, %d s late.", $key, $policy->value, $oldest->format('Y-m-d H:i:s'), $late($oldest))
+            : sprintf(
+                "Schedule '%s' (misfirePolicy %s) dropped %d missed occurrences: %s (%d s late) to %s (%d s late).",
+                $key,
+                $policy->value,
+                count($dropped),
+                $oldest->format('Y-m-d H:i:s'),
+                $late($oldest),
+                $newest->format('Y-m-d H:i:s'),
+                $late($newest),
+            );
+
+        $output?->writeln('  ' . $message);
+        StaticLoggerBridge::warning('scheduler', $message, [
+            'schedule_key' => $key,
+            'misfire_policy' => $policy->value,
+            'dropped' => count($dropped),
+            'oldest' => $oldest->format(DATE_ATOM),
+            'oldest_late_seconds' => $late($oldest),
+            'newest' => $newest->format(DATE_ATOM),
+            'newest_late_seconds' => $late($newest),
+        ]);
     }
 
     /** Read again: another planner may have inserted it since the check before the insert. */

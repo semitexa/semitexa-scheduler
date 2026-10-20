@@ -6,6 +6,8 @@ namespace Semitexa\Scheduler\Tests\Unit\Service;
 
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Semitexa\Core\Log\LoggerInterface;
+use Semitexa\Core\Log\StaticLoggerBridge;
 use Semitexa\Scheduler\Application\Service\CronOccurrenceCalculator;
 use Semitexa\Scheduler\Application\Service\MisfirePolicyResolver;
 use Semitexa\Scheduler\Application\Service\SchedulePlanner;
@@ -14,6 +16,7 @@ use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
+use Symfony\Component\Console\Output\BufferedOutput;
 
 /**
  * Nothing proved that due runs are computed from cron (tk-parity-proof-gaps):
@@ -27,10 +30,19 @@ final class SchedulePlannerTest extends TestCase
 
     private PlannerRuns $runs;
 
+    private PlannerLog $log;
+
     protected function setUp(): void
     {
         $this->definitions = new PlannerDefinitions();
         $this->runs = new PlannerRuns();
+        $this->log = new PlannerLog();
+        StaticLoggerBridge::set($this->log);
+    }
+
+    protected function tearDown(): void
+    {
+        StaticLoggerBridge::reset();
     }
 
     #[Test]
@@ -122,6 +134,75 @@ final class SchedulePlannerTest extends TestCase
 
         self::assertSame(['11:00'], $this->runs->timesFor('report'));
         self::assertSame('2026-10-19 11:00', $this->definitions->cursor('report')?->format('Y-m-d H:i'));
+    }
+
+    /** On time means at most ON_TIME_SECONDS (120 s) late: 120 s is kept, 121 s is a misfire. */
+    #[Test]
+    public function an_occurrence_120_seconds_late_is_on_time_and_121_seconds_late_is_missed(): void
+    {
+        $this->definitions->add($this->definition('*/5 * * * *', cursor: '2026-10-19 10:00:00', key: 'kept', misfire: 'skip'));
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-19 10:07:00 UTC'));
+        $this->definitions->add($this->definition('*/5 * * * *', cursor: '2026-10-19 10:00:00', key: 'dropped', misfire: 'skip'));
+        $this->definitions->findByKey('kept')?->setEnabled(false);
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-19 10:07:01 UTC'));
+
+        self::assertSame(['10:05'], $this->runs->timesFor('kept'));
+        self::assertSame([], $this->runs->timesFor('dropped'));
+    }
+
+    /**
+     * A run lost to a restart gap just over the threshold looked exactly like
+     * a schedule with nothing due. What the misfire policy drops is now said,
+     * on the planner's output and in the log, with how late it was.
+     */
+    #[Test]
+    public function an_occurrence_the_misfire_policy_drops_is_named_with_how_late_it_was(): void
+    {
+        $this->definitions->add($this->definition('*/5 * * * *', cursor: '2026-10-19 10:00:00', misfire: 'skip'));
+        $output = new BufferedOutput();
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-19 10:07:01 UTC'), $output);
+
+        $line = "Schedule 'report' (misfirePolicy skip) dropped 1 missed occurrence: 2026-10-19 10:05:00, 121 s late.";
+        self::assertSame("  {$line}\n", $output->fetch());
+        self::assertSame([['warning', $line, [
+            'schedule_key' => 'report',
+            'misfire_policy' => 'skip',
+            'dropped' => 1,
+            'oldest' => '2026-10-19T10:05:00+00:00',
+            'oldest_late_seconds' => 121,
+            'newest' => '2026-10-19T10:05:00+00:00',
+            'newest_late_seconds' => 121,
+            '_channel' => 'scheduler',
+        ]]], $this->log->entries);
+    }
+
+    /** A long outage is one entry per schedule, not one per occurrence. */
+    #[Test]
+    public function a_long_outage_is_said_once_per_schedule_with_its_oldest_and_newest_occurrence(): void
+    {
+        $this->definitions->add($this->definition('*/10 * * * *', cursor: '2026-10-19 10:00:00', misfire: 'skip'));
+        $output = new BufferedOutput();
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-19 11:00:30 UTC'), $output);
+
+        self::assertSame(['11:00'], $this->runs->timesFor('report'));
+        self::assertSame([
+            "  Schedule 'report' (misfirePolicy skip) dropped 5 missed occurrences: 2026-10-19 10:10:00 (3030 s late) to 2026-10-19 10:50:00 (630 s late).",
+            '  Planned  for report at 2026-10-19 11:00:00',
+        ], explode("\n", rtrim($output->fetch(), "\n")));
+        self::assertCount(1, $this->log->entries);
+    }
+
+    /** Nothing dropped, nothing said. */
+    #[Test]
+    public function planning_on_time_says_nothing_about_misfires(): void
+    {
+        $this->definitions->add($this->definition('*/5 * * * *', cursor: '2026-10-19 10:00:00', misfire: 'skip'));
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-19 10:05:20 UTC'));
+
+        self::assertSame([], $this->log->entries);
     }
 
     /**
@@ -331,5 +412,41 @@ final class PlannerRacingRuns implements ScheduledRunRepositoryInterface
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
         return $this->inner->reclaimExpiredLeases($now);
+    }
+}
+
+final class PlannerLog implements LoggerInterface
+{
+    /** @var list<array{string, string, array<string, mixed>}> */
+    public array $entries = [];
+
+    public function error(string $message, array $context = []): void
+    {
+        $this->entries[] = ['error', $message, $context];
+    }
+
+    public function critical(string $message, array $context = []): void
+    {
+        $this->entries[] = ['critical', $message, $context];
+    }
+
+    public function warning(string $message, array $context = []): void
+    {
+        $this->entries[] = ['warning', $message, $context];
+    }
+
+    public function info(string $message, array $context = []): void
+    {
+        $this->entries[] = ['info', $message, $context];
+    }
+
+    public function notice(string $message, array $context = []): void
+    {
+        $this->entries[] = ['notice', $message, $context];
+    }
+
+    public function debug(string $message, array $context = []): void
+    {
+        $this->entries[] = ['debug', $message, $context];
     }
 }
