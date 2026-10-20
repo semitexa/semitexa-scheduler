@@ -81,7 +81,8 @@ final class SchedulePlannerTest extends TestCase
     #[Test]
     public function the_misfire_policy_decides_what_a_long_outage_catches_up(): void
     {
-        $now = new \DateTimeImmutable('2026-10-19 11:00:00 UTC');
+        // Planning resumes at 11:03: even the 11:00 occurrence is late.
+        $now = new \DateTimeImmutable('2026-10-19 11:03:00 UTC');
         foreach (['skip' => 'skip', 'once' => 'run_once', 'capped' => 'catch_up'] as $key => $policy) {
             $this->definitions->add($this->definition('*/10 * * * *', cursor: '2026-10-19 10:00:00', key: $key, misfire: $policy, maxCatchUp: 2));
         }
@@ -92,6 +93,35 @@ final class SchedulePlannerTest extends TestCase
         self::assertSame(['11:00'], $this->runs->timesFor('once'), 'run once: the latest missed occurrence');
         self::assertSame(['10:50', '11:00'], $this->runs->timesFor('capped'), 'catch up, capped at the newest two');
         self::assertSame('2026-10-19 11:00', $this->definitions->cursor('skip')?->format('Y-m-d H:i'), 'a skipped backlog still moves the cursor');
+    }
+
+    /**
+     * REGRESSION (tk-scheduler-skip-misfire-drops-ontime). Skip dropped every
+     * occurrence the planner found, the one due now included, so a job with
+     * misfirePolicy skip never ran at all. Only an occurrence the planner is
+     * late for is a misfire.
+     */
+    #[Test]
+    public function skip_still_plans_the_occurrence_that_is_due_now(): void
+    {
+        $this->definitions->add($this->definition('*/5 * * * *', cursor: '2026-10-19 10:00:00', misfire: 'skip'));
+
+        $planned = $this->planner()->plan(new \DateTimeImmutable('2026-10-19 10:05:20 UTC'));
+
+        self::assertSame(1, $planned);
+        self::assertSame(['10:05'], $this->runs->timesFor('report'));
+    }
+
+    /** After an outage that ends on an occurrence, skip drops the backlog and keeps the one due now. */
+    #[Test]
+    public function skip_after_an_outage_plans_only_the_occurrence_due_now(): void
+    {
+        $this->definitions->add($this->definition('*/10 * * * *', cursor: '2026-10-19 10:00:00', misfire: 'skip'));
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-19 11:00:30 UTC'));
+
+        self::assertSame(['11:00'], $this->runs->timesFor('report'));
+        self::assertSame('2026-10-19 11:00', $this->definitions->cursor('report')?->format('Y-m-d H:i'));
     }
 
     /**

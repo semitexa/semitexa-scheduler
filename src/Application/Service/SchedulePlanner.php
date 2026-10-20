@@ -52,8 +52,9 @@ final class SchedulePlanner
         }
 
         $toSchedule = $this->misfireResolver->resolve(
-            missedOccurrences: $occurrences,
+            occurrences: $occurrences,
             policy: MisfirePolicy::from($definition->getMisfirePolicy()),
+            now: $now,
             maxCatchUpRuns: $definition->getMaxCatchUpRuns(),
         );
 
