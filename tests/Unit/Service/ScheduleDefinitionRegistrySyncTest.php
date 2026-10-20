@@ -39,6 +39,20 @@ final class ScheduleDefinitionRegistrySyncTest extends TestCase
         ], $problems);
     }
 
+    /** Two worker containers sync at once: the one that loses the insert writes onto the other's row. */
+    #[Test]
+    public function a_schedule_another_worker_inserted_meanwhile_is_updated_not_a_failure(): void
+    {
+        $repository = new SyncFixtureRepository();
+        $repository->raceOnFirstInsert = true;
+
+        $problems = $this->registry([SyncFixtureServiceJob::class], $repository)->sync();
+
+        self::assertSame([], $problems);
+        self::assertSame('*/5 * * * *', $repository->saved['fixture.service']->getCronExpression());
+        self::assertSame(SyncFixtureServiceJob::class, $repository->saved['fixture.service']->getJobClass());
+    }
+
     /** @param list<class-string> $classes */
     private function registry(array $classes, SyncFixtureRepository $repository): ScheduleDefinitionRegistry
     {
@@ -68,6 +82,8 @@ final class SyncFixtureRepository implements ScheduleDefinitionRepositoryInterfa
     /** @var array<string, ScheduleDefinition> */
     public array $saved = [];
 
+    public bool $raceOnFirstInsert = false;
+
     public function findByKey(string $scheduleKey): ?ScheduleDefinition
     {
         return $this->saved[$scheduleKey] ?? null;
@@ -80,6 +96,13 @@ final class SyncFixtureRepository implements ScheduleDefinitionRepositoryInterfa
 
     public function save(ScheduleDefinition $entity): void
     {
+        if ($this->raceOnFirstInsert && !isset($this->saved[$entity->getScheduleKey()])) {
+            $this->raceOnFirstInsert = false;
+            $theirs = new ScheduleDefinition();
+            $theirs->setScheduleKey($entity->getScheduleKey());
+            $this->saved[$entity->getScheduleKey()] = $theirs;
+            throw new \Semitexa\Orm\Exception\ConstraintViolationException("Duplicate entry for key 'uniq_scheduler_schedule_key'", '23000', 1062);
+        }
         $this->saved[$entity->getScheduleKey()] = $entity;
     }
 

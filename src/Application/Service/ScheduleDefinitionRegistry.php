@@ -7,6 +7,7 @@ namespace Semitexa\Scheduler\Application\Service;
 use Semitexa\Core\Attribute\AsService;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Core\Discovery\ClassDiscovery;
+use Semitexa\Orm\Exception\ConstraintViolationException;
 use Semitexa\Scheduler\Attribute\AsScheduledJob;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
@@ -62,22 +63,33 @@ final class ScheduleDefinitionRegistry
                 continue;
             }
 
-            $existing = $this->repository()->findByKey($attr->key);
-            $definition = $existing ?? new ScheduleDefinition();
-            $definition->setScheduleKey($attr->key);
-            $definition->setJobClass($class);
-            $definition->setCronExpression($cron);
-            $definition->setPool($attr->pool);
-            $definition->setOverlapPolicy($attr->overlapPolicy);
-            $definition->setMisfirePolicy($attr->misfirePolicy);
-            $definition->setTenantMode($attr->tenantMode);
-            $definition->setMaxAttempts($attr->maxAttempts);
-            $definition->setRetryBackoffSeconds($attr->retryBackoffSeconds);
-            $definition->setMaxCatchUpRuns($attr->maxCatchUpRuns);
-            $this->repository()->save($definition);
+            try {
+                $this->upsert($class, $attr, $cron);
+            } catch (ConstraintViolationException) {
+                // Another worker container inserted this schedule after the
+                // lookup: write onto its row instead.
+                $this->upsert($class, $attr, $cron);
+            }
         }
 
         return $problems;
+    }
+
+    private function upsert(string $class, AsScheduledJob $attr, string $cron): void
+    {
+        $existing = $this->repository()->findByKey($attr->key);
+        $definition = $existing ?? new ScheduleDefinition();
+        $definition->setScheduleKey($attr->key);
+        $definition->setJobClass($class);
+        $definition->setCronExpression($cron);
+        $definition->setPool($attr->pool);
+        $definition->setOverlapPolicy($attr->overlapPolicy);
+        $definition->setMisfirePolicy($attr->misfirePolicy);
+        $definition->setTenantMode($attr->tenantMode);
+        $definition->setMaxAttempts($attr->maxAttempts);
+        $definition->setRetryBackoffSeconds($attr->retryBackoffSeconds);
+        $definition->setMaxCatchUpRuns($attr->maxCatchUpRuns);
+        $this->repository()->save($definition);
     }
 
     /** @return list<ScheduleDefinition> */

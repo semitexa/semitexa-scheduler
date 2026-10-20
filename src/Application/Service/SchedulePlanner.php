@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Service;
 
+use Semitexa\Orm\Exception\ConstraintViolationException;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
@@ -78,6 +79,12 @@ final class SchedulePlanner
         return $planned;
     }
 
+    /** Read again: another planner may have inserted it since the check before the insert. */
+    private function plannedMeanwhile(string $occurrenceKey): bool
+    {
+        return $this->runRepository->findByOccurrenceKey($occurrenceKey) !== null;
+    }
+
     private function materializeRun(ScheduleDefinition $definition, ScheduledOccurrence $occurrence, ?OutputInterface $output): int
     {
         $occurrenceKey = $occurrence->occurrenceKey();
@@ -103,7 +110,17 @@ final class SchedulePlanner
         $run->setMaxAttempts($definition->getMaxAttempts());
         $run->setRetryBackoffSeconds($definition->getRetryBackoffSeconds());
 
-        $this->runRepository->save($run);
+        try {
+            $this->runRepository->save($run);
+        } catch (ConstraintViolationException $e) {
+            // Another planner (another worker container) inserted this
+            // occurrence after the check above: planned, not a failure. Any
+            // other violation is still one.
+            if ($this->plannedMeanwhile($occurrenceKey)) {
+                return 0;
+            }
+            throw $e;
+        }
 
         $output?->writeln(sprintf(
             '  Planned %s for <info>%s</info> at %s',

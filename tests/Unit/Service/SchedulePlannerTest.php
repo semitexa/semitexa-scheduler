@@ -94,6 +94,29 @@ final class SchedulePlannerTest extends TestCase
         self::assertSame('2026-10-19 11:00', $this->definitions->cursor('skip')?->format('Y-m-d H:i'), 'a skipped backlog still moves the cursor');
     }
 
+    /**
+     * REGRESSION (review, tk-worker-runs-mail-work). With several worker
+     * containers each runs scheduler:plan, in step. Between one planner's
+     * check and its insert another inserted the same occurrence: the unique
+     * index refused the second insert, the exception ended that planner's
+     * whole run, and the schedules after it were not planned. An occurrence
+     * another planner already inserted is now taken as planned.
+     */
+    #[Test]
+    public function an_occurrence_another_planner_inserted_meanwhile_is_taken_as_planned_and_planning_goes_on(): void
+    {
+        $this->definitions->add($this->definition('*/5 * * * *', cursor: '2026-10-19 10:00:00', key: 'first'));
+        $this->definitions->add($this->definition('*/5 * * * *', cursor: '2026-10-19 10:00:00', key: 'second'));
+        $racing = new PlannerRacingRuns($this->runs, raceOnScheduleKey: 'first');
+
+        $planned = (new SchedulePlanner($this->definitions, $racing, new CronOccurrenceCalculator(), new MisfirePolicyResolver(), new TenantOccurrenceExpander()))
+            ->plan(new \DateTimeImmutable('2026-10-19 10:06:00 UTC'));
+
+        self::assertSame(1, $planned, 'the other planner planned first; this one planned second');
+        self::assertSame(['first', 'second'], array_map(static fn (ScheduledRun $r): string => (string) $r->getScheduleKey(), $this->runs->all()));
+        self::assertSame('2026-10-19 10:05', $this->definitions->cursor('second')?->format('Y-m-d H:i'), 'the schedule after the race was still planned');
+    }
+
     private function planner(): SchedulePlanner
     {
         return new SchedulePlanner($this->definitions, $this->runs, new CronOccurrenceCalculator(), new MisfirePolicyResolver(), new TenantOccurrenceExpander());
@@ -227,5 +250,56 @@ final class PlannerRuns implements ScheduledRunRepositoryInterface
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
         return 0;
+    }
+}
+
+/** Another planner inserts the same occurrence between this one's check and its insert. */
+final class PlannerRacingRuns implements ScheduledRunRepositoryInterface
+{
+    private bool $raced = false;
+
+    public function __construct(private readonly PlannerRuns $inner, private readonly string $raceOnScheduleKey)
+    {
+    }
+
+    public function findById(string $id): ?ScheduledRun
+    {
+        return $this->inner->findById($id);
+    }
+
+    public function findByOccurrenceKey(string $occurrenceKey): ?ScheduledRun
+    {
+        return $this->inner->findByOccurrenceKey($occurrenceKey);
+    }
+
+    public function save(ScheduledRun $entity): void
+    {
+        if (!$this->raced && $entity->getScheduleKey() === $this->raceOnScheduleKey) {
+            $this->raced = true;
+            $theirs = clone $entity;
+            $this->inner->save($theirs);
+            throw new \Semitexa\Orm\Exception\ConstraintViolationException("Duplicate entry for key 'uniq_scheduler_run_occurrence'", '23000', 1062);
+        }
+        $this->inner->save($entity);
+    }
+
+    public function claimNextDue(string $pool, string $workerId, int $leaseTtlSeconds): ?string
+    {
+        return $this->inner->claimNextDue($pool, $workerId, $leaseTtlSeconds);
+    }
+
+    public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool
+    {
+        return $this->inner->renewLease($runId, $workerId, $leaseTtlSeconds);
+    }
+
+    public function finalizeIfOwned(ScheduledRun $run, ?string $expectedOwner): bool
+    {
+        return $this->inner->finalizeIfOwned($run, $expectedOwner);
+    }
+
+    public function reclaimExpiredLeases(\DateTimeImmutable $now): int
+    {
+        return $this->inner->reclaimExpiredLeases($now);
     }
 }
