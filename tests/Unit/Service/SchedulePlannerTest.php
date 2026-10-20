@@ -32,17 +32,21 @@ final class SchedulePlannerTest extends TestCase
 
     private PlannerLog $log;
 
+    /** The logger found, put back: reset() would leave later tests with none (review). */
+    private mixed $previousLogger = null;
+
     protected function setUp(): void
     {
         $this->definitions = new PlannerDefinitions();
         $this->runs = new PlannerRuns();
         $this->log = new PlannerLog();
+        $this->previousLogger = (new \ReflectionProperty(StaticLoggerBridge::class, 'logger'))->getValue();
         StaticLoggerBridge::set($this->log);
     }
 
     protected function tearDown(): void
     {
-        StaticLoggerBridge::reset();
+        (new \ReflectionProperty(StaticLoggerBridge::class, 'logger'))->setValue(null, $this->previousLogger);
     }
 
     #[Test]

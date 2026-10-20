@@ -49,6 +49,7 @@ final class ScheduleDefinitionRegistrySyncTest extends TestCase
         $problems = $this->registry([SyncFixtureServiceJob::class], $repository)->sync();
 
         self::assertSame([], $problems);
+        self::assertSame('their-row', $repository->saved['fixture.service']->getId(), 'the other worker\'s row, updated, not a second one');
         self::assertSame('*/5 * * * *', $repository->saved['fixture.service']->getCronExpression());
         self::assertSame(SyncFixtureServiceJob::class, $repository->saved['fixture.service']->getJobClass());
     }
@@ -96,14 +97,25 @@ final class SyncFixtureRepository implements ScheduleDefinitionRepositoryInterfa
 
     public function save(ScheduleDefinition $entity): void
     {
-        if ($this->raceOnFirstInsert && !isset($this->saved[$entity->getScheduleKey()])) {
+        $key = $entity->getScheduleKey();
+        if ($this->raceOnFirstInsert && !isset($this->saved[$key])) {
             $this->raceOnFirstInsert = false;
             $theirs = new ScheduleDefinition();
-            $theirs->setScheduleKey($entity->getScheduleKey());
-            $this->saved[$entity->getScheduleKey()] = $theirs;
-            throw new \Semitexa\Orm\Exception\ConstraintViolationException("Duplicate entry for key 'uniq_scheduler_schedule_key'", '23000', 1062);
+            $theirs->setId('their-row');
+            $theirs->setScheduleKey($key);
+            $this->saved[$key] = $theirs;
+            throw self::duplicate();
         }
-        $this->saved[$entity->getScheduleKey()] = $entity;
+        // As the unique index on schedule_key: a new row whose key is taken is refused, every time.
+        if ($entity->getId() === '' && isset($this->saved[$key])) {
+            throw self::duplicate();
+        }
+        $this->saved[$key] = $entity;
+    }
+
+    private static function duplicate(): \Semitexa\Orm\Exception\ConstraintViolationException
+    {
+        return new \Semitexa\Orm\Exception\ConstraintViolationException("Duplicate entry for key 'uniq_scheduler_schedule_key'", '23000', 1062);
     }
 
     public function advancePlanningCursor(string $scheduleKey, \DateTimeImmutable $cursor): void

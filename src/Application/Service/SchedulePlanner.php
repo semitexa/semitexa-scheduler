@@ -59,9 +59,12 @@ final class SchedulePlanner
             now: $now,
             maxCatchUpRuns: $definition->getMaxCatchUpRuns(),
         );
+        // A set, not in_array: an uncapped catch_up after a week down is ~10 000
+        // occurrences, and comparing each with each held the planner for seconds.
+        $kept = array_fill_keys(array_map(static fn (\DateTimeImmutable $at): int => $at->getTimestamp(), $toSchedule), true);
         $this->reportDropped($definition, $policy, array_values(array_filter(
             $occurrences,
-            static fn (\DateTimeImmutable $at): bool => !in_array($at, $toSchedule, false),
+            static fn (\DateTimeImmutable $at): bool => !isset($kept[$at->getTimestamp()]),
         )), $now, $output);
 
         $tenantMode = TenantScheduleMode::from($definition->getTenantMode());
