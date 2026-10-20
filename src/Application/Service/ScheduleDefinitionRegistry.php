@@ -48,6 +48,13 @@ final class ScheduleDefinitionRegistry
             /** @var AsScheduledJob $attr */
             $attr = $attrs[0]->newInstance();
 
+            // RunExecutor builds the job through the container, which builds
+            // services only: a job that is not one would fail every run.
+            if ($reflection->getAttributes(AsService::class) === []) {
+                $problems[] = "Scheduled job '{$class}' ({$attr->key}) is not a service, so the scheduler cannot build it: mark it #[AsService].";
+                continue;
+            }
+
             try {
                 $cron = $attr->cron();
             } catch (\InvalidArgumentException $e) {
