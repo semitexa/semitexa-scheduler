@@ -210,12 +210,20 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
         return $this->orm()->getAdapter();
     }
 
+    /**
+     * The persisted state — the id the insert made, above all — back into the
+     * caller's instance. Through reflection: the model's properties are
+     * private, and get_object_vars() from here saw none of them, so save()
+     * copied nothing and dispatchAt() returned an empty run id.
+     */
     private function copyIntoMutableDomain(object $source, ScheduledRun $target): void
     {
         $source instanceof ScheduledRun || throw new \InvalidArgumentException('Unexpected persisted domain model.');
 
-        foreach (get_object_vars($source) as $property => $value) {
-            $target->{$property} = $value;
+        foreach ((new \ReflectionObject($source))->getProperties() as $property) {
+            if (!$property->isStatic() && $property->isInitialized($source)) {
+                $property->setValue($target, $property->getValue($source));
+            }
         }
     }
 }
