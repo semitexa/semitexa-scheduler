@@ -32,13 +32,40 @@ final class SchedulePlanner
     {
         $total = 0;
         foreach ($this->definitionRepository->findAllEnabled() as $definition) {
-            $total += $this->planDefinition($definition, $now, $output);
+            // A schedule whose job class is gone would fail every run. It is
+            // passed over, not disabled, so it plans again once the class is
+            // back (a deploy caught mid-sync, a package reinstalled). The sync
+            // that scheduler:plan runs first says so.
+            if (!class_exists($definition->getJobClass())) {
+                continue;
+            }
+            // One broken schedule (a policy typo, a bad cron or timezone) is
+            // reported and passed over: it used to fail the whole plan, and
+            // every schedule after it in key order stopped running.
+            try {
+                $total += $this->planDefinition($definition, $now, $output);
+            } catch (\ValueError | \InvalidArgumentException | \DateInvalidTimeZoneException $e) {
+                $message = "Schedule '{$definition->getScheduleKey()}' was not planned: {$e->getMessage()}";
+                $output?->writeln("<error>{$message}</error>");
+                StaticLoggerBridge::error('scheduler', $message);
+            }
         }
         return $total;
     }
 
     private function planDefinition(ScheduleDefinition $definition, \DateTimeImmutable $now, ?OutputInterface $output): int
     {
+        // Every policy is read before anything is calculated: a typo found
+        // halfway through logged a "dropped" warning that grew each minute.
+        $policy = MisfirePolicy::from($definition->getMisfirePolicy());
+        OverlapPolicy::from($definition->getOverlapPolicy());
+        $tenantMode = TenantScheduleMode::from($definition->getTenantMode());
+        // A recurring schedule has nowhere to name its tenant, and this mode
+        // was planned as global: the job ran tenant-blind.
+        if ($tenantMode === TenantScheduleMode::ExplicitTenant) {
+            throw new \InvalidArgumentException("tenantMode 'explicit_tenant' cannot name a tenant for a recurring schedule; use 'per_tenant', or dispatch the job with a tenantId.");
+        }
+
         $from = $definition->getPlanningCursorAt() ?? $now->modify('-1 minute');
 
         $occurrences = $this->calculator->getOccurrencesBetween(
@@ -52,7 +79,6 @@ final class SchedulePlanner
             return 0;
         }
 
-        $policy = MisfirePolicy::from($definition->getMisfirePolicy());
         $toSchedule = $this->misfireResolver->resolve(
             occurrences: $occurrences,
             policy: $policy,
@@ -67,7 +93,6 @@ final class SchedulePlanner
             static fn (\DateTimeImmutable $at): bool => !isset($kept[$at->getTimestamp()]),
         )), $now, $output);
 
-        $tenantMode = TenantScheduleMode::from($definition->getTenantMode());
         $planned = 0;
 
         foreach ($toSchedule as $scheduledFor) {

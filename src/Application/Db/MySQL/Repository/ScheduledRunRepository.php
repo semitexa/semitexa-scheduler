@@ -177,6 +177,25 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
         $nowStr = $now->format('Y-m-d H:i:s.u');
+        // A run whose lease lapsed while running has already had that attempt
+        // counted. Out of attempts, it fails here: sent back to pending every
+        // time, a job that kills its worker (a fatal error, out of memory) ran
+        // forever. A claimed run has not started, so it is only requeued.
+        $failed = $this->adapter()->execute(
+            "UPDATE scheduler_runs
+             SET status = 'failed',
+                 lease_owner = NULL,
+                 lease_expires_at = NULL,
+                 finished_at = :now_fin,
+                 last_error = 'Its lease ran out before it finished (the worker stopped, or the job ran past the lease without renewLease()), and its attempts are used up.',
+                 updated_at = :now_upd
+             WHERE status = 'running'
+               AND lease_expires_at IS NOT NULL
+               AND lease_expires_at < :now_lease
+               AND attempt_count >= max_attempts",
+            ['now_fin' => $nowStr, 'now_upd' => $nowStr, 'now_lease' => $nowStr],
+        );
+
         $result = $this->adapter()->execute(
             "UPDATE scheduler_runs
              SET status = 'pending',
@@ -185,11 +204,12 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
                  updated_at = :now_upd
              WHERE status IN ('claimed', 'running')
                AND lease_expires_at IS NOT NULL
-               AND lease_expires_at < :now_lease",
+               AND lease_expires_at < :now_lease
+               AND (status = 'claimed' OR attempt_count < max_attempts)",
             ['now_upd' => $nowStr, 'now_lease' => $nowStr],
         );
 
-        return $result->rowCount;
+        return $failed->rowCount + $result->rowCount;
     }
 
     private function repository(): DomainRepository

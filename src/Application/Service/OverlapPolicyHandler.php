@@ -72,12 +72,14 @@ final class OverlapPolicyHandler
 
     private function resolvePolicy(ScheduledRun $run): OverlapPolicy
     {
-        if ($run->getScheduleKey() !== null) {
-            $definition = $this->definitionRepository->findByKey($run->getScheduleKey());
-            if ($definition !== null) {
-                return OverlapPolicy::from($definition->getOverlapPolicy());
-            }
+        // A one-off run that names a lock asked to run alone, not to be
+        // dropped: skipped, a workflow timeout or a dispatchAt() job was lost
+        // whenever its lock happened to be held. It waits instead.
+        if ($run->getScheduleKey() === null) {
+            return OverlapPolicy::Delay;
         }
-        return OverlapPolicy::Skip;
+        $definition = $this->definitionRepository->findByKey($run->getScheduleKey());
+
+        return OverlapPolicy::tryFrom((string) $definition?->getOverlapPolicy()) ?? OverlapPolicy::Skip;
     }
 }

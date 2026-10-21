@@ -36,6 +36,10 @@ final class ScheduledRunClaimLeaseTest extends TestCase
                 lease_owner TEXT,
                 lease_expires_at TEXT,
                 last_heartbeat_at TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 1,
+                finished_at TEXT,
+                last_error TEXT,
                 updated_at TEXT
             )',
         );
@@ -130,6 +134,34 @@ final class ScheduledRunClaimLeaseTest extends TestCase
         $liveRow = $this->rowFor($live);
         self::assertSame('running', $liveRow['status']);
         self::assertSame('w-alive', $liveRow['lease_owner']);
+    }
+
+    #[Test]
+    public function a_run_that_killed_its_worker_on_its_last_attempt_fails_instead_of_coming_back(): void
+    {
+        // Its attempt was counted when it started; sent back to pending each
+        // time, a job that crashes its worker ran forever.
+        $crashed = $this->seedRun(status: 'running', availableAt: '-10 minutes', leaseOwner: 'w-dead', leaseExpiresAt: '-1 minute');
+        $this->db->execute('UPDATE scheduler_runs SET attempt_count = 1, max_attempts = 1 WHERE id = :id', ['id' => Uuid7::toBytes($crashed)]);
+        $retryable = $this->seedRun(status: 'running', availableAt: '-10 minutes', leaseOwner: 'w-dead', leaseExpiresAt: '-1 minute');
+        $this->db->execute('UPDATE scheduler_runs SET attempt_count = 1, max_attempts = 3 WHERE id = :id', ['id' => Uuid7::toBytes($retryable)]);
+
+        self::assertSame(2, $this->repository->reclaimExpiredLeases(new \DateTimeImmutable()));
+
+        self::assertSame('failed', $this->rowFor($crashed)['status']);
+        self::assertNotNull($this->rowFor($crashed)['last_error']);
+        self::assertSame('pending', $this->rowFor($retryable)['status']);
+    }
+
+    #[Test]
+    public function a_claimed_run_whose_lease_lapsed_is_requeued_even_with_no_attempts_left(): void
+    {
+        // A claimed run never started, so no attempt of it was spent.
+        $claimed = $this->seedRun(status: 'claimed', availableAt: '-10 minutes', leaseOwner: 'w-dead', leaseExpiresAt: '-1 minute');
+        $this->db->execute('UPDATE scheduler_runs SET attempt_count = 0, max_attempts = 0 WHERE id = :id', ['id' => Uuid7::toBytes($claimed)]);
+
+        self::assertSame(1, $this->repository->reclaimExpiredLeases(new \DateTimeImmutable()));
+        self::assertSame('pending', $this->rowFor($claimed)['status']);
     }
 
     #[Test]

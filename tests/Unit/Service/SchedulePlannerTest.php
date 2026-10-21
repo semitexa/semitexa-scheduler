@@ -232,6 +232,79 @@ final class SchedulePlannerTest extends TestCase
         self::assertSame('2026-10-19 10:05', $this->definitions->cursor('second')?->format('Y-m-d H:i'), 'the schedule after the race was still planned');
     }
 
+    #[Test]
+    public function one_broken_schedule_does_not_stop_the_others(): void
+    {
+        // A policy typo failed the whole plan, and every schedule after it in
+        // key order stopped running.
+        $broken = $this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'a-broken');
+        $broken->setOverlapPolicy('Skip');
+        $this->definitions->add($broken);
+        $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'b-fine'));
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'));
+
+        self::assertNotSame([], $this->runs->timesFor('b-fine'), 'a schedule after the broken one was not planned');
+    }
+
+    #[Test]
+    public function an_explicit_tenant_schedule_is_refused_not_run_as_global(): void
+    {
+        $explicit = $this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'explicit');
+        $explicit->setTenantMode('explicit_tenant');
+        $this->definitions->add($explicit);
+        $output = new BufferedOutput();
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'), $output);
+
+        self::assertSame([], $this->runs->timesFor('explicit'));
+        self::assertStringContainsString('explicit_tenant', $output->fetch());
+    }
+
+    #[Test]
+    public function a_bad_timezone_does_not_stop_the_others(): void
+    {
+        $broken = $this->definition('*/5 * * * *', '2026-10-21 10:00', timezone: 'Europe/Nowhere', key: 'a-broken');
+        $this->definitions->add($broken);
+        $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'b-fine'));
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'));
+
+        self::assertNotSame([], $this->runs->timesFor('b-fine'));
+    }
+
+    #[Test]
+    public function a_schedule_whose_job_class_is_gone_is_passed_over_and_left_enabled(): void
+    {
+        // Every run of it failed. It is not disabled: the class may be back
+        // after the next deploy, and the schedule with it.
+        $gone = $this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'gone');
+        $gone->setJobClass('App\\Jobs\\DeletedLongAgo');
+        $this->definitions->add($gone);
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'));
+
+        self::assertSame([], $this->runs->timesFor('gone'));
+        self::assertTrue($gone->isEnabled());
+    }
+
+    #[Test]
+    public function an_overlap_typo_is_refused_before_any_occurrence_is_reported_dropped(): void
+    {
+        // The misfire policy ran first and logged "dropped N missed
+        // occurrences", N growing each minute the cursor stayed put.
+        $typo = $this->definition('*/5 * * * *', '2026-10-21 08:00', key: 'typo', misfire: 'skip');
+        $typo->setOverlapPolicy('Skip');
+        $this->definitions->add($typo);
+        $output = new BufferedOutput();
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'), $output);
+
+        $said = $output->fetch();
+        self::assertStringContainsString('typo', $said);
+        self::assertStringNotContainsString('dropped', $said);
+    }
+
     private function planner(): SchedulePlanner
     {
         return new SchedulePlanner($this->definitions, $this->runs, new CronOccurrenceCalculator(), new MisfirePolicyResolver(), new TenantOccurrenceExpander());
@@ -241,7 +314,7 @@ final class SchedulePlannerTest extends TestCase
     {
         $definition = new ScheduleDefinition();
         $definition->setScheduleKey($key);
-        $definition->setJobClass('App\\Jobs\\Report');
+        $definition->setJobClass(PlannerFixtureJob::class);
         $definition->setCronExpression($cron);
         $definition->setTimezone($timezone);
         $definition->setPool('default');
@@ -453,4 +526,8 @@ final class PlannerLog implements LoggerInterface
     {
         $this->entries[] = ['debug', $message, $context];
     }
+}
+
+final class PlannerFixtureJob
+{
 }

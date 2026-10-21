@@ -72,6 +72,16 @@ final class ScheduleDefinitionRegistry
             }
         }
 
+        // A schedule whose job class was deleted kept being planned, and every
+        // run failed. The planner now passes it over; the sync says so. It is
+        // not disabled: a class missing for a moment (a deploy caught mid-sync)
+        // would have switched the schedule off for good.
+        foreach ($this->repository()->findAllEnabled() as $definition) {
+            if (!class_exists($definition->getJobClass())) {
+                $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: its job class {$definition->getJobClass()} no longer exists.";
+            }
+        }
+
         return $problems;
     }
 

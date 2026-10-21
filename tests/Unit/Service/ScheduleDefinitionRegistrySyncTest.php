@@ -54,6 +54,27 @@ final class ScheduleDefinitionRegistrySyncTest extends TestCase
         self::assertSame(SyncFixtureServiceJob::class, $repository->saved['fixture.service']->getJobClass());
     }
 
+    #[Test]
+    public function a_schedule_whose_job_class_is_gone_is_said_and_left_enabled(): void
+    {
+        // It kept being planned, and every run failed; the planner now passes
+        // it over. Disabling it here switched it off for good when the class
+        // was missing only for a moment.
+        $repository = new SyncFixtureRepository();
+        $gone = new ScheduleDefinition();
+        $gone->setId('gone-row');
+        $gone->setScheduleKey('fixture.gone');
+        $gone->setJobClass('App\\Jobs\\DeletedLongAgo');
+        $gone->setEnabled(true);
+        $repository->saved['fixture.gone'] = $gone;
+
+        $problems = $this->registry([SyncFixtureServiceJob::class], $repository)->sync();
+
+        self::assertTrue($repository->saved['fixture.gone']->isEnabled());
+        self::assertStringContainsString('fixture.gone', implode(' ', $problems));
+        self::assertTrue($repository->saved['fixture.service']->isEnabled(), 'a schedule whose class exists is untouched');
+    }
+
     /** @param list<class-string> $classes */
     private function registry(array $classes, SyncFixtureRepository $repository): ScheduleDefinitionRegistry
     {
