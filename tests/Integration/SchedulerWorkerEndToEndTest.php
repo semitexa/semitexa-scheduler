@@ -230,6 +230,22 @@ final class SchedulerWorkerEndToEndTest extends TestCase
         self::assertSame(['running', 'retry_scheduled'], array_column($this->historyOf($runId), 'event_type'));
     }
 
+    /** docker stop lands mid-pass (sweeping, reclaiming): the pass must not go on to claim and run a whole new job. */
+    #[Test]
+    public function a_stop_asked_during_a_pass_claims_nothing_new(): void
+    {
+        $runId = $this->dispatch(payload: ['order' => 7], tenantId: $this->tenant);
+        [$worker, $loop] = $this->worker();
+        $loop->stopDuringPass = true;
+
+        $worker->run();
+
+        self::assertSame([], $loop->claims, 'nothing claimed after the stop');
+        self::assertCount(0, SchedulerEndToEndJob::$calls);
+        self::assertSame('pending', $this->row($runId)['status'], 'left for the next worker');
+        self::assertStringContainsString('Scheduler worker stopped', $this->log());
+    }
+
     #[Test]
     public function two_workers_racing_for_the_same_due_run_execute_it_once(): void
     {
@@ -510,6 +526,8 @@ final class DrainingRunRepository implements ScheduledRunRepositoryInterface
     /** @var list<?string> */
     public array $claims = [];
     public bool $deadlineHit = false;
+    /** A stop asked mid-pass, as SIGTERM lands: while the pass reclaims leases, before it claims. */
+    public bool $stopDuringPass = false;
     private ?SchedulerWorker $worker = null;
     private float $deadline = 0.0;
 
@@ -579,6 +597,9 @@ final class DrainingRunRepository implements ScheduledRunRepositoryInterface
 
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
+        if ($this->stopDuringPass) {
+            $this->worker?->stop();
+        }
         return $this->inner->reclaimExpiredLeases($now);
     }
 }

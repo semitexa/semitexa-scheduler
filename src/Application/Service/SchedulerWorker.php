@@ -57,6 +57,12 @@ final class SchedulerWorker
 
             $this->sweepOldRuns();
 
+            // A stop asked while this pass swept and reclaimed (SIGTERM lands
+            // anywhere): claiming now would start a whole new job after it.
+            if ($this->shouldStop) {
+                break;
+            }
+
             // Claim next due run
             $runId = $this->leaseManager->claimNextDue($pool, $workerId);
 
@@ -73,6 +79,8 @@ final class SchedulerWorker
 
             $this->processRun($run, $workerId);
         }
+
+        $this->log('Scheduler worker stopped');
     }
 
     /**
