@@ -46,8 +46,16 @@ final class ScheduleDefinitionRegistry
             if ($attrs === []) {
                 continue;
             }
-            /** @var AsScheduledJob $attr */
-            $attr = $attrs[0]->newInstance();
+            // A malformed attribute (a misspelled or mistyped argument) is
+            // reported and passed over: it threw out of the sync, and no
+            // schedule was planned on any pass.
+            try {
+                /** @var AsScheduledJob $attr */
+                $attr = $attrs[0]->newInstance();
+            } catch (\Error $e) {
+                $problems[] = "Scheduled job '{$class}' has a malformed #[AsScheduledJob]: {$e->getMessage()}";
+                continue;
+            }
 
             // RunExecutor builds the job through the container, which builds
             // services only: a job that is not one would fail every run.
@@ -76,13 +84,50 @@ final class ScheduleDefinitionRegistry
         // run failed. The planner now passes it over; the sync says so. It is
         // not disabled: a class missing for a moment (a deploy caught mid-sync)
         // would have switched the schedule off for good.
+        //
+        // A row whose key no class declares any more (the key was renamed,
+        // the attribute removed, the module switched off) is passed over the
+        // same way: it kept planning beside the renamed one, and the job ran
+        // twice per occurrence. Not disabled either: after a rollback, or
+        // while two images sync during a deploy, each would switch the
+        // other's key off and the job would stop for good.
+        // Discovery that found nothing is more likely broken than right; the
+        // planner then plans every row, and this says nothing either.
+        $declaredKeys = $this->declaredKeys();
+        $declared = array_flip($declaredKeys);
         foreach ($this->repository()->findAllEnabled() as $definition) {
             if (!class_exists($definition->getJobClass())) {
                 $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: its job class {$definition->getJobClass()} no longer exists.";
+            } elseif ($declaredKeys !== [] && !isset($declared[$definition->getScheduleKey()])) {
+                $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: no #[AsScheduledJob] declares it any more.";
             }
         }
 
         return $problems;
+    }
+
+    /**
+     * Every key an #[AsScheduledJob] declares, including jobs the sync
+     * refuses (not a service, a cron that does not parse): their rows are
+     * kept as they were, not orphaned. Read from the raw arguments, so a
+     * malformed attribute still declares its key.
+     *
+     * @return list<string>
+     */
+    public function declaredKeys(): array
+    {
+        $keys = [];
+        foreach ($this->classDiscovery()->findClassesWithAttribute(AsScheduledJob::class) as $class) {
+            foreach ((new \ReflectionClass($class))->getAttributes(AsScheduledJob::class) as $attribute) {
+                $arguments = $attribute->getArguments();
+                $key = $arguments['key'] ?? $arguments[0] ?? null;
+                if (is_string($key)) {
+                    $keys[] = $key;
+                }
+            }
+        }
+
+        return $keys;
     }
 
     private function upsert(string $class, AsScheduledJob $attr, string $cron): void

@@ -262,6 +262,28 @@ final class SchedulePlannerTest extends TestCase
     }
 
     #[Test]
+    public function a_key_the_code_no_longer_declares_is_passed_over(): void
+    {
+        $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'old-name'));
+        $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'new-name'));
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'), null, ['new-name']);
+
+        self::assertSame([], $this->runs->timesFor('old-name'));
+        self::assertNotSame([], $this->runs->timesFor('new-name'));
+    }
+
+    #[Test]
+    public function discovery_that_found_nothing_does_not_stop_every_schedule(): void
+    {
+        $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'kept'));
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'), null, []);
+
+        self::assertNotSame([], $this->runs->timesFor('kept'));
+    }
+
+    #[Test]
     public function a_bad_timezone_does_not_stop_the_others(): void
     {
         $broken = $this->definition('*/5 * * * *', '2026-10-21 10:00', timezone: 'Europe/Nowhere', key: 'a-broken');

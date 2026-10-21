@@ -75,6 +75,49 @@ final class ScheduleDefinitionRegistrySyncTest extends TestCase
         self::assertTrue($repository->saved['fixture.service']->isEnabled(), 'a schedule whose class exists is untouched');
     }
 
+    #[Test]
+    public function a_renamed_key_is_said_and_left_as_it_was(): void
+    {
+        // The old row kept planning beside the renamed one: the job ran twice
+        // per occurrence. The planner passes it over; it is not disabled, so a
+        // rollback to the old name plans it again.
+        $repository = new SyncFixtureRepository();
+        $old = new ScheduleDefinition();
+        $old->setId('old-row');
+        $old->setScheduleKey('fixture.old-name');
+        $old->setJobClass(SyncFixtureServiceJob::class);
+        $old->setEnabled(true);
+        $repository->saved['fixture.old-name'] = $old;
+
+        $registry = $this->registry([SyncFixtureServiceJob::class], $repository);
+        $problems = $registry->sync();
+
+        self::assertStringContainsString('fixture.old-name', implode(' ', $problems));
+        self::assertTrue($repository->saved['fixture.old-name']->isEnabled());
+        self::assertSame(['fixture.service'], $registry->declaredKeys());
+    }
+
+    #[Test]
+    public function a_key_on_a_job_the_sync_refuses_is_still_declared(): void
+    {
+        // Its row is kept as it was, not reported as orphaned.
+        $registry = $this->registry([SyncFixtureServiceJob::class, SyncFixturePlainJob::class], new SyncFixtureRepository());
+
+        self::assertSame(['fixture.service', 'fixture.plain'], $registry->declaredKeys());
+    }
+
+    #[Test]
+    public function a_malformed_attribute_is_reported_and_the_rest_still_sync(): void
+    {
+        // It threw out of the sync, and nothing was planned on any pass.
+        $repository = new SyncFixtureRepository();
+
+        $problems = $this->registry([SyncFixtureMalformedJob::class, SyncFixtureServiceJob::class], $repository)->sync();
+
+        self::assertSame(['fixture.service'], array_keys($repository->saved));
+        self::assertStringContainsString(SyncFixtureMalformedJob::class, implode(' ', $problems));
+    }
+
     /** @param list<class-string> $classes */
     private function registry(array $classes, SyncFixtureRepository $repository): ScheduleDefinitionRegistry
     {
@@ -155,6 +198,15 @@ final class SyncFixtureServiceJob implements ScheduledJobInterface
 
 #[AsScheduledJob(key: 'fixture.plain', cronExpression: '*/5 * * * *')]
 final class SyncFixturePlainJob implements ScheduledJobInterface
+{
+    public function handle(ScheduledJobContext $context): void
+    {
+    }
+}
+
+#[AsService]
+#[AsScheduledJob(key: 'fixture.malformed', cron: '*/5 * * * *')]
+final class SyncFixtureMalformedJob implements ScheduledJobInterface
 {
     public function handle(ScheduledJobContext $context): void
     {

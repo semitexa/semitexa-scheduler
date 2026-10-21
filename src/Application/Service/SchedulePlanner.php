@@ -28,10 +28,20 @@ final class SchedulePlanner
         private readonly TenantOccurrenceExpander $tenantExpander,
     ) {}
 
-    public function plan(\DateTimeImmutable $now, ?OutputInterface $output = null): int
+    /**
+     * @param list<string>|null $declaredKeys keys the code still declares; a
+     *        row with any other key is passed over (the sync says so). Null,
+     *        or an empty list (discovery that found nothing is more likely
+     *        broken than right), plans every enabled row.
+     */
+    public function plan(\DateTimeImmutable $now, ?OutputInterface $output = null, ?array $declaredKeys = null): int
     {
         $total = 0;
+        $declared = $declaredKeys === null || $declaredKeys === [] ? null : array_flip($declaredKeys);
         foreach ($this->definitionRepository->findAllEnabled() as $definition) {
+            if ($declared !== null && !isset($declared[$definition->getScheduleKey()])) {
+                continue;
+            }
             // A schedule whose job class is gone would fail every run. It is
             // passed over, not disabled, so it plans again once the class is
             // back (a deploy caught mid-sync, a package reinstalled). The sync
