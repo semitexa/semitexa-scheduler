@@ -12,6 +12,7 @@ use Semitexa\Scheduler\Application\Db\MySQL\Repository\SchedulerRunHistoryReposi
 use Semitexa\Scheduler\Configuration\SchedulerConfig;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
 use Semitexa\Scheduler\Domain\Contract\SchedulerLockRepositoryInterface;
 use Semitexa\Scheduler\Application\Service\RunLeaseManager;
 use Semitexa\Scheduler\Application\Service\SchedulerLockManager;
@@ -86,8 +87,12 @@ final class SchedulerWorkCommand extends Command
                 retryScheduler:  $retryScheduler,
                 historyRepository: $historyRepo,
                 config:          $config,
+                retention:       $this->runRepo instanceof ScheduledRunRetentionInterface ? $this->runRepo : null,
             );
             $worker->setOutput($output);
+            if (!$this->runRepo instanceof ScheduledRunRetentionInterface && $config->runRetentionDays > 0) {
+                $io->warning('Finished runs are not pruned: the run repository bound here does not implement ScheduledRunRetentionInterface.');
+            }
             $worker->run($pool);
         } catch (\Throwable $e) {
             $io->error('Scheduler worker failed: ' . $e->getMessage());

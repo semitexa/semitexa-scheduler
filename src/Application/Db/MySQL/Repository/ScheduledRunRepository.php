@@ -12,10 +12,12 @@ use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
+use Semitexa\Scheduler\Domain\Enum\RunStatus;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
 #[SatisfiesRepositoryContract(of: ScheduledRunRepositoryInterface::class)]
-final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
+final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, ScheduledRunRetentionInterface
 {
     #[InjectAsReadonly]
     protected OrmManager $orm;
@@ -210,6 +212,40 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
         );
 
         return $failed->rowCount + $result->rowCount;
+    }
+
+    public function deleteFinishedBefore(\DateTimeImmutable $cutoff, int $limit): int
+    {
+        $finished = implode(', ', array_map(
+            static fn (RunStatus $s): string => "'{$s->value}'",
+            array_filter(RunStatus::cases(), static fn (RunStatus $s): bool => $s->isTerminal()),
+        ));
+        // No ORDER BY: with no index on updated_at it sorted the whole table
+        // every batch; unordered, the scan stops at the limit.
+        $ids = array_column($this->adapter()->execute(
+            "SELECT id FROM scheduler_runs
+             WHERE status IN ({$finished}) AND updated_at < :cutoff
+             LIMIT " . max(1, min($limit, 500)),
+            ['cutoff' => $cutoff->format('Y-m-d H:i:s')],
+        )->rows, 'id');
+        if ($ids === []) {
+            return 0;
+        }
+
+        $params = [];
+        foreach (array_values($ids) as $i => $id) {
+            $params["id{$i}"] = $id;
+        }
+        $in = ':' . implode(', :', array_keys($params));
+
+        $this->adapter()->execute("DELETE FROM scheduler_run_history WHERE run_id IN ({$in})", $params);
+
+        // The status again: a run cannot change once finished, but the guard
+        // costs nothing and keeps a live row out of reach.
+        return $this->adapter()->execute(
+            "DELETE FROM scheduler_runs WHERE id IN ({$in}) AND status IN ({$finished})",
+            $params,
+        )->rowCount;
     }
 
     private function repository(): DomainRepository

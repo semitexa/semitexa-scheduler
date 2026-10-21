@@ -174,6 +174,50 @@ final class ScheduledRunClaimLeaseTest extends TestCase
         self::assertNotNull($this->repository->claimNextDue('default', 'w-new', 60));
     }
 
+    #[Test]
+    public function finished_runs_past_retention_go_with_their_history_and_nothing_else_does(): void
+    {
+        // Nothing deleted them: a job planned every minute added a run and
+        // its history rows each time, forever.
+        $this->db->execute('CREATE TABLE scheduler_run_history (id BLOB PRIMARY KEY, run_id BLOB NOT NULL, event_type TEXT)');
+        $old = $this->seedRun(status: 'succeeded', availableAt: '-40 days');
+        $oldPending = $this->seedRun(status: 'pending', availableAt: '-40 days');
+        // Kept: finished a day ago (updated_at is when it finished).
+        $recent = $this->seedRun(status: 'failed', availableAt: '-40 days');
+        $this->db->execute("UPDATE scheduler_runs SET updated_at = :at WHERE id IN (:a, :b)", [
+            'at' => (new \DateTimeImmutable('-40 days'))->format('Y-m-d H:i:s.u'),
+            'a' => Uuid7::toBytes($old),
+            'b' => Uuid7::toBytes($oldPending),
+        ]);
+        foreach ([$old, $old, $recent] as $runId) {
+            $this->db->execute('INSERT INTO scheduler_run_history (id, run_id, event_type) VALUES (:id, :run, :e)', [
+                'id' => Uuid7::toBytes(Uuid7::generate()), 'run' => Uuid7::toBytes($runId), 'e' => 'succeeded',
+            ]);
+        }
+
+        $this->db->execute("UPDATE scheduler_runs SET updated_at = :at WHERE id = :r", [
+            'at' => (new \DateTimeImmutable('-1 day'))->format('Y-m-d H:i:s.u'),
+            'r' => Uuid7::toBytes($recent),
+        ]);
+        $cancelled = $this->seedRun(status: 'cancelled', availableAt: '-40 days');
+        $this->db->execute("UPDATE scheduler_runs SET updated_at = :at WHERE id = :c", [
+            'at' => (new \DateTimeImmutable('-40 days'))->format('Y-m-d H:i:s.u'),
+            'c' => Uuid7::toBytes($cancelled),
+        ]);
+
+        // In batches: one per call.
+        self::assertSame(1, $this->repository->deleteFinishedBefore(new \DateTimeImmutable('-30 days'), 1));
+        self::assertSame(1, $this->repository->deleteFinishedBefore(new \DateTimeImmutable('-30 days'), 1));
+        self::assertSame(0, $this->repository->deleteFinishedBefore(new \DateTimeImmutable('-30 days'), 1));
+
+        $left = array_map(static fn (array $r): string => Uuid7::fromBytes($r['id']), $this->db->execute('SELECT id FROM scheduler_runs')->rows);
+        sort($left);
+        $expected = [$oldPending, $recent];
+        sort($expected);
+        self::assertSame($expected, $left, 'a pending run is never removed, however old');
+        self::assertSame(1, count($this->db->execute('SELECT 1 FROM scheduler_run_history')->rows), 'only the deleted run\'s history went');
+    }
+
     private function seedRun(
         string $status,
         string $availableAt,

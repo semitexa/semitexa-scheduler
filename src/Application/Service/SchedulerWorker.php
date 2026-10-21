@@ -7,6 +7,7 @@ namespace Semitexa\Scheduler\Application\Service;
 use Semitexa\Scheduler\Application\Db\MySQL\Repository\SchedulerRunHistoryRepository;
 use Semitexa\Scheduler\Configuration\SchedulerConfig;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Domain\Enum\RunStatus;
 use Semitexa\Scheduler\Domain\Exception\LeaseLostException;
@@ -18,6 +19,7 @@ final class SchedulerWorker
 {
     private ?OutputInterface $output = null;
     private bool $shouldStop = false;
+    private int $nextSweepAt = 0;
 
     public function __construct(
         private readonly RunLeaseManager $leaseManager,
@@ -28,6 +30,7 @@ final class SchedulerWorker
         private readonly RetryScheduler $retryScheduler,
         private readonly SchedulerRunHistoryRepository $historyRepository,
         private readonly SchedulerConfig $config,
+        private readonly ?ScheduledRunRetentionInterface $retention = null,
     ) {}
 
     public function setOutput(?OutputInterface $output): void
@@ -52,6 +55,8 @@ final class SchedulerWorker
             // Clean up stale locks
             $this->lockManager->cleanup(new \DateTimeImmutable());
 
+            $this->sweepOldRuns();
+
             // Claim next due run
             $runId = $this->leaseManager->claimNextDue($pool, $workerId);
 
@@ -67,6 +72,37 @@ final class SchedulerWorker
             }
 
             $this->processRun($run, $workerId);
+        }
+    }
+
+    /**
+     * Finished runs older than SCHEDULER_RETENTION_DAYS go, with their history,
+     * at most once an hour per worker: nothing deleted them, and a job planned
+     * every minute added a run and its history rows each time, forever.
+     */
+    private function sweepOldRuns(): void
+    {
+        if ($this->retention === null || $this->config->runRetentionDays <= 0 || time() < $this->nextSweepAt) {
+            return;
+        }
+        $this->nextSweepAt = time() + 3600;
+
+        $cutoff = (new \DateTimeImmutable())->modify("-{$this->config->runRetentionDays} days");
+        try {
+            $deleted = 0;
+            for ($batch = 0; $batch < 20; $batch++) {
+                $n = $this->retention->deleteFinishedBefore($cutoff, 500);
+                $deleted += $n;
+                if ($n < 500) {
+                    break;
+                }
+            }
+            if ($deleted > 0) {
+                $this->log("Deleted {$deleted} finished run(s) older than {$this->config->runRetentionDays} days.");
+            }
+        } catch (\Throwable $e) {
+            // Retention is housekeeping: it never stops the worker.
+            $this->log("Run retention sweep failed: {$e->getMessage()}", 'warning');
         }
     }
 
