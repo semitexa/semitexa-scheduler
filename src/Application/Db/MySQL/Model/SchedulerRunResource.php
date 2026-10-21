@@ -25,6 +25,7 @@ use Semitexa\Orm\Metadata\HasRelationReferences;
 #[Index(columns: ['occurrence_key'], unique: true, name: 'uniq_scheduler_run_occurrence')]
 #[Index(columns: ['pool', 'status', 'available_at'], name: 'idx_scheduler_runs_pool_status_available')]
 #[Index(columns: ['status', 'lease_expires_at'], name: 'idx_scheduler_runs_status_lease_expiry')]
+#[Index(columns: ['status', 'updated_at'], name: 'idx_scheduler_runs_status_updated')]
 #[Index(columns: ['tenant_id', 'status', 'available_at'], name: 'idx_scheduler_runs_tenant_status_available')]
 #[Index(columns: ['schedule_key', 'scheduled_for'], name: 'idx_scheduler_runs_schedule_scheduled_for')]
 #[Index(columns: ['lock_key', 'status'], name: 'idx_scheduler_runs_lock_status')]

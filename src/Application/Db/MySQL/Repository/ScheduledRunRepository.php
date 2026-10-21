@@ -220,8 +220,8 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
             static fn (RunStatus $s): string => "'{$s->value}'",
             array_filter(RunStatus::cases(), static fn (RunStatus $s): bool => $s->isTerminal()),
         ));
-        // No ORDER BY: with no index on updated_at it sorted the whole table
-        // every batch; unordered, the scan stops at the limit.
+        // No ORDER BY (it sorted the whole table every batch); the scan runs
+        // on idx_scheduler_runs_status_updated, so it reads only old rows.
         $ids = array_column($this->adapter()->execute(
             "SELECT id FROM scheduler_runs
              WHERE status IN ({$finished}) AND updated_at < :cutoff
