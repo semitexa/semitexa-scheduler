@@ -111,10 +111,23 @@ final class SchedulerRunNowCommand extends Command
             $run->setMaxAttempts($definition->getMaxAttempts());
             $run->setRetryBackoffSeconds($definition->getRetryBackoffSeconds());
 
+            // An inline run is saved already claimed, under its own lease. It
+            // was saved pending, so a live worker for the pool could claim it
+            // in between and run it a second time, and with no lease to renew
+            // every renewLease() inside the job failed the attempt.
+            $inlineWorkerId = null;
+            $config = SchedulerConfig::create();
+            if ($input->getOption('inline')) {
+                $inlineWorkerId = 'run-now-inline-' . getmypid() . '-' . bin2hex(random_bytes(4));
+                $run->setStatus(RunStatus::Claimed->value);
+                $run->setLeaseOwner($inlineWorkerId);
+                $run->setLeaseExpiresAt($now->modify('+' . $config->leaseTtlSeconds . ' seconds'));
+            }
+
             $this->runRepo->save($run);
 
-            if ($input->getOption('inline')) {
-                return $this->runInline($run, $io);
+            if ($inlineWorkerId !== null) {
+                return $this->runInline($run, $inlineWorkerId, $config, $io);
             }
 
             $io->success("Created immediate run '{$run->getId()}' for '{$scheduleKey}'.");
@@ -132,9 +145,8 @@ final class SchedulerRunNowCommand extends Command
      * Observatory journal - and answer with its real outcome. A failed job
      * exits non-zero, which is the whole point for scripts and test stands.
      */
-    private function runInline(ScheduledRun $run, SymfonyStyle $io): int
+    private function runInline(ScheduledRun $run, string $workerId, SchedulerConfig $config, SymfonyStyle $io): int
     {
-        $config      = SchedulerConfig::create();
         $historyRepo = new SchedulerRunHistoryRepository();
         $lockManager = new SchedulerLockManager($this->lockRepo, $config->lockTtlSeconds);
 
@@ -149,7 +161,7 @@ final class SchedulerRunNowCommand extends Command
             config:            $config,
         );
 
-        $ok = $worker->processSingle($run, 'run-now-inline-' . getmypid());
+        $ok = $worker->processSingle($run, $workerId);
 
         if ($ok) {
             $io->success("Run '{$run->getId()}' executed inline and succeeded.");
@@ -157,7 +169,10 @@ final class SchedulerRunNowCommand extends Command
             return Command::SUCCESS;
         }
 
-        $io->error("Run '{$run->getId()}' executed inline and FAILED (status: {$run->getStatus()}). See scheduler history for the error.");
+        // The stored status, not the in-memory one: a discarded outcome wrote
+        // nothing, and a delayed or retried run is still to come.
+        $status = $this->runRepo->findById($run->getId())?->getStatus() ?? $run->getStatus();
+        $io->error("Run '{$run->getId()}' executed inline and did not succeed (status now: {$status}). See scheduler history for the error.");
 
         return Command::FAILURE;
     }

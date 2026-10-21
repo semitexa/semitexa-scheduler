@@ -185,7 +185,10 @@ final class SchedulerWorkerEndToEndTest extends TestCase
 
         self::assertFalse($loop->deadlineHit, 'the loop never drained: ' . $this->log());
         self::assertSame([1, 2], array_column(SchedulerEndToEndJob::$calls, 'attempt'), 'one retry, then terminal');
-        self::assertSame([$runId, $runId, null], $loop->claims, 'the retry is claimed again as soon as it is due');
+        // A retry with no backoff is due "now", which DATETIME may round up by
+        // a second: an empty poll before it comes due is not a miss.
+        self::assertSame([$runId, $runId], array_values(array_filter($loop->claims)), 'the retry is claimed again once it is due');
+        self::assertNull($loop->claims[array_key_last($loop->claims)], 'and then nothing is left');
 
         $row = $this->row($runId);
         self::assertSame('failed', $row['status']);
@@ -301,6 +304,20 @@ final class SchedulerWorkerEndToEndTest extends TestCase
             $this->runs->renewLease($runId, $deadWorker, 300),
             'the dead worker cannot renew a lease it lost',
         );
+    }
+
+    #[Test]
+    public function a_single_run_whose_outcome_was_discarded_is_not_reported_as_a_success(): void
+    {
+        // scheduler:run-now --inline exited 0 after the lease was lost and its
+        // result thrown away: the in-memory status still said succeeded.
+        $runId = $this->dispatch();
+        $run = $this->runs->findById($runId);
+        self::assertNotNull($run);
+        [$worker] = $this->worker(new LeaseLostAtFinalizeRunRepository($this->runs));
+
+        self::assertFalse($worker->processSingle($run, 'run-now-inline-test'));
+        self::assertCount(1, SchedulerEndToEndJob::$calls, 'the job did run');
     }
 
     /**
@@ -446,6 +463,48 @@ final class SchedulerEndToEndJob implements ScheduledJobInterface
  * run() returns when the work is done instead of polling forever. A deadline
  * stops a loop that never drains, and says so.
  */
+final class LeaseLostAtFinalizeRunRepository implements ScheduledRunRepositoryInterface
+{
+    public function __construct(private readonly ScheduledRunRepositoryInterface $inner)
+    {
+    }
+
+    public function findById(string $id): ?ScheduledRun
+    {
+        return $this->inner->findById($id);
+    }
+
+    public function findByOccurrenceKey(string $occurrenceKey): ?ScheduledRun
+    {
+        return $this->inner->findByOccurrenceKey($occurrenceKey);
+    }
+
+    public function save(ScheduledRun $entity): void
+    {
+        $this->inner->save($entity);
+    }
+
+    public function claimNextDue(string $pool, string $workerId, int $leaseTtlSeconds): ?string
+    {
+        return $this->inner->claimNextDue($pool, $workerId, $leaseTtlSeconds);
+    }
+
+    public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool
+    {
+        return $this->inner->renewLease($runId, $workerId, $leaseTtlSeconds);
+    }
+
+    public function finalizeIfOwned(ScheduledRun $run, ?string $expectedOwner): bool
+    {
+        return false;
+    }
+
+    public function reclaimExpiredLeases(\DateTimeImmutable $now): int
+    {
+        return $this->inner->reclaimExpiredLeases($now);
+    }
+}
+
 final class DrainingRunRepository implements ScheduledRunRepositoryInterface
 {
     /** @var list<?string> */

@@ -84,19 +84,22 @@ final class SchedulerWorker
      */
     public function processSingle(ScheduledRun $run, string $workerId): bool
     {
-        $this->processRun($run, $workerId);
-
-        return $run->getStatus() === RunStatus::Succeeded->value;
+        // The in-memory status says succeeded even when the outcome was
+        // discarded (the lease was lost meanwhile): only a recorded success
+        // counts.
+        return $this->processRun($run, $workerId)
+            && $run->getStatus() === RunStatus::Succeeded->value;
     }
 
-    private function processRun(ScheduledRun $run, string $workerId): void
+    /** @return bool false when the outcome was discarded because the lease was lost */
+    private function processRun(ScheduledRun $run, string $workerId): bool
     {
         $this->log("Processing run '{$run->getId()}' (job: {$run->getJobClass()})");
 
         $overlapResult = $this->overlapHandler->handle($run, $workerId, $this->output);
 
         if (!$overlapResult->proceed) {
-            return;
+            return true;
         }
 
         $heartbeat = new LeaseHeartbeat(
@@ -138,11 +141,15 @@ final class SchedulerWorker
             // Another worker took the run over while this one was executing
             // it; the outcome is theirs to record, so this one writes nothing.
             $this->log("Run '{$run->getId()}' outcome discarded: {$e->getMessage()}", 'warning');
+
+            return false;
         } finally {
             if ($overlapResult->lockAcquired && $run->getLockKey() !== null) {
                 $this->lockManager->release($run->getLockKey(), $workerId);
             }
         }
+
+        return true;
     }
 
     private function log(string $message, string $level = 'info'): void
