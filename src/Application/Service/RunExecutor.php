@@ -86,8 +86,12 @@ final class RunExecutor
             // StaticContainerAccessRule (the Queue-consumer tier); jobs must
             // carry #[AsService] alongside #[AsScheduledJob] to be resolvable.
             $container = ContainerFactory::get();
-            /** @var ScheduledJobInterface $job */
             $job = $container->get($run->getJobClass());
+            // The class name comes from a row, and dispatchAt() takes any
+            // string: without this any service with a handle() method ran.
+            if (!$job instanceof ScheduledJobInterface) {
+                throw new \LogicException(sprintf('%s is not a scheduled job: it does not implement %s.', $run->getJobClass(), ScheduledJobInterface::class));
+            }
             $job->handle($context);
 
             $output?->writeln("<info>Run '{$run->getId()}' executed successfully (attempt {$run->getAttemptCount()}).</info>");
@@ -96,9 +100,10 @@ final class RunExecutor
 
             return RunExecutionResult::success();
         } catch (\Throwable $e) {
-            $output?->writeln("<error>Run '{$run->getId()}' failed: {$e->getMessage()}</error>");
-            $error = self::truncate($e->getMessage());
-            return RunExecutionResult::failure($e->getMessage());
+            $message = self::validUtf8($e->getMessage());
+            $output?->writeln("<error>Run '{$run->getId()}' failed: {$message}</error>");
+            $error = self::truncate($message);
+            return RunExecutionResult::failure($message);
         } finally {
             // The reason rides the end line so the live panel can say WHY a
             // run failed when the cursor lands on it; the schedule key lets
@@ -137,6 +142,19 @@ final class RunExecutor
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * The message as valid UTF-8, each broken byte sequence replaced by U+FFFD.
+     * A job's error carries whatever it caught (a raw upstream body, a Latin-1
+     * driver message), and strict MySQL refuses invalid UTF-8 in last_error:
+     * the write threw, the worker stopped, and the real error was never kept.
+     * htmlspecialchars() does the scrubbing without mbstring or iconv, which
+     * this package does not require.
+     */
+    private static function validUtf8(string $text): string
+    {
+        return htmlspecialchars_decode(htmlspecialchars($text, ENT_SUBSTITUTE | ENT_NOQUOTES, 'UTF-8'), ENT_NOQUOTES);
     }
 
     /**

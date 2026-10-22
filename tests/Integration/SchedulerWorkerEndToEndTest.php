@@ -230,6 +230,66 @@ final class SchedulerWorkerEndToEndTest extends TestCase
         self::assertSame(['running', 'retry_scheduled'], array_column($this->historyOf($runId), 'event_type'));
     }
 
+    /**
+     * A message in Latin-1 (a driver's, an upstream body) is not UTF-8, and
+     * strict MySQL refused it in last_error: the write threw, the worker
+     * stopped, and the run stayed `running` until its lease ran out.
+     */
+    #[Test]
+    public function an_error_that_is_not_utf8_is_stored_and_the_worker_goes_on(): void
+    {
+        $runId = $this->dispatch(payload: ['latin1' => true]);
+
+        [$worker, $loop] = $this->worker();
+        $worker->run();
+
+        self::assertFalse($loop->deadlineHit, 'the loop never drained: ' . $this->log());
+        $row = $this->row($runId);
+        self::assertSame('failed', $row['status']);
+        self::assertSame("caf\u{FFFD} down #1", $row['last_error']);
+    }
+
+    /**
+     * A write the database refused after the job ran stopped the worker; the
+     * supervisor's restart claimed the same run and stopped again. The worker
+     * now says so and goes on; the run keeps its lease for the reclaim.
+     */
+    #[Test]
+    public function a_failed_state_write_is_logged_and_the_worker_goes_on(): void
+    {
+        $runId = $this->dispatch();
+
+        [$worker, $loop] = $this->worker(new FinalizeRefusedRunRepository($this->runs));
+        $worker->run();
+
+        self::assertFalse($loop->deadlineHit, 'the loop never drained: ' . $this->log());
+        self::assertCount(1, SchedulerEndToEndJob::$calls);
+        self::assertStringContainsString("Run '{$runId}': writing its state or history failed: RuntimeException: refused", $this->log());
+        self::assertSame('running', $this->row($runId)['status'], 'left to the lease reclaim');
+    }
+
+    /** dispatchAt() takes any class name: one that is not a job must not have its handle() called. */
+    #[Test]
+    public function a_class_that_is_not_a_scheduled_job_is_not_run(): void
+    {
+        self::store()->readonly[SchedulerNotAJob::class] = new SchedulerNotAJob();
+        SchedulerNotAJob::$called = false;
+        try {
+            $runId = $this->dispatch(jobClass: SchedulerNotAJob::class);
+
+            [$worker, $loop] = $this->worker();
+            $worker->run();
+
+            self::assertFalse($loop->deadlineHit, 'the loop never drained: ' . $this->log());
+            self::assertFalse(SchedulerNotAJob::$called);
+            $row = $this->row($runId);
+            self::assertSame('failed', $row['status']);
+            self::assertStringContainsString('is not a scheduled job', (string) $row['last_error']);
+        } finally {
+            unset(self::store()->readonly[SchedulerNotAJob::class]);
+        }
+    }
+
     /** docker stop lands mid-pass (sweeping, reclaiming): the pass must not go on to claim and run a whole new job. */
     #[Test]
     public function a_stop_asked_during_a_pass_claims_nothing_new(): void
@@ -374,9 +434,10 @@ final class SchedulerWorkerEndToEndTest extends TestCase
         ?string $tenantId = null,
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
+        string $jobClass = SchedulerEndToEndJob::class,
     ): string {
         $this->lastDispatchReturned = $this->scheduler->dispatchAt(
-            jobClass: SchedulerEndToEndJob::class,
+            jobClass: $jobClass,
             // In the past by more than DATETIME rounding: due on the first poll.
             runAt: new \DateTimeImmutable('-5 seconds'),
             payload: $payload,
@@ -470,6 +531,20 @@ final class SchedulerEndToEndJob implements ScheduledJobInterface
         if (isset($context->payload['fail'])) {
             throw new \RuntimeException($context->payload['fail'] . ' #' . $context->attemptNumber);
         }
+        if (isset($context->payload['latin1'])) {
+            throw new \RuntimeException("caf\xE9 down #" . $context->attemptNumber);
+        }
+    }
+}
+
+/** A service with a handle() method that is not a scheduled job. */
+final class SchedulerNotAJob
+{
+    public static bool $called = false;
+
+    public function handle(mixed $anything = null): void
+    {
+        self::$called = true;
     }
 }
 
@@ -653,5 +728,48 @@ final class InterleavingAdapter implements DatabaseAdapterInterface
     public function lastInsertId(): string
     {
         return $this->inner->lastInsertId();
+    }
+}
+
+/** Pass-through whose finalize the database refuses, as strict MySQL refused invalid UTF-8. */
+final class FinalizeRefusedRunRepository implements ScheduledRunRepositoryInterface
+{
+    public function __construct(private readonly ScheduledRunRepositoryInterface $inner)
+    {
+    }
+
+    public function findById(string $id): ?ScheduledRun
+    {
+        return $this->inner->findById($id);
+    }
+
+    public function findByOccurrenceKey(string $occurrenceKey): ?ScheduledRun
+    {
+        return $this->inner->findByOccurrenceKey($occurrenceKey);
+    }
+
+    public function save(ScheduledRun $entity): void
+    {
+        $this->inner->save($entity);
+    }
+
+    public function claimNextDue(string $pool, string $workerId, int $leaseTtlSeconds): ?string
+    {
+        return $this->inner->claimNextDue($pool, $workerId, $leaseTtlSeconds);
+    }
+
+    public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool
+    {
+        return $this->inner->renewLease($runId, $workerId, $leaseTtlSeconds);
+    }
+
+    public function finalizeIfOwned(ScheduledRun $run, ?string $expectedOwner): bool
+    {
+        throw new \RuntimeException('refused');
+    }
+
+    public function reclaimExpiredLeases(\DateTimeImmutable $now): int
+    {
+        return $this->inner->reclaimExpiredLeases($now);
     }
 }

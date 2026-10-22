@@ -327,6 +327,42 @@ final class SchedulePlannerTest extends TestCase
         self::assertStringNotContainsString('dropped', $said);
     }
 
+    #[Test]
+    public function a_cron_that_never_matches_is_passed_over_and_the_schedules_after_it_still_plan(): void
+    {
+        // 31 February parses; the library throws a bare RuntimeException at
+        // the first calculation, which ended the whole plan.
+        $this->definitions->add($this->definition('0 0 31 2 *', '2026-10-21 10:00', key: 'a-impossible'));
+        $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'b-fine'));
+        $output = new BufferedOutput();
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'), $output);
+
+        self::assertSame(['10:05', '10:10'], $this->runs->timesFor('b-fine'));
+        self::assertStringContainsString('a-impossible', $output->fetch());
+    }
+
+    #[Test]
+    public function a_job_at_a_time_of_day_runs_once_when_the_clocks_go_back(): void
+    {
+        // Kyiv, 25 October 2026: 04:00 EEST becomes 03:00 EET, so 03:30
+        // happens at 00:30Z and again at 01:30Z. Planned a minute at a time,
+        // as the worker does, the second one lies in a later pass.
+        $this->definitions->add($this->definition('30 3 * * *', '2026-10-24 23:00', timezone: 'Europe/Kyiv', key: 'daily'));
+        $this->definitions->add($this->definition('0 * * * *', '2026-10-24 23:00', timezone: 'Europe/Kyiv', key: 'hourly'));
+        $this->definitions->add($this->definition('0-59/30 3 * * *', '2026-10-24 23:00', timezone: 'Europe/Kyiv', key: 'stepped'));
+
+        $at = new \DateTimeImmutable('2026-10-24 23:00 UTC');
+        for ($i = 0; $i < 180; $i++) {
+            $at = $at->modify('+1 minute');
+            $this->planner()->plan($at);
+        }
+
+        self::assertSame(['00:30'], $this->runs->timesFor('daily'));
+        self::assertSame(['00:00', '01:00', '02:00'], $this->runs->timesFor('hourly'), 'an hourly job keeps both 03:00 ticks');
+        self::assertSame(['00:00', '00:30', '01:00', '01:30'], $this->runs->timesFor('stepped'), 'a step keeps the repeated hour\'s ticks');
+    }
+
     private function planner(): SchedulePlanner
     {
         return new SchedulePlanner($this->definitions, $this->runs, new CronOccurrenceCalculator(), new MisfirePolicyResolver(), new TenantOccurrenceExpander());

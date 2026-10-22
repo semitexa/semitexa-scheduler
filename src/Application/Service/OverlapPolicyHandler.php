@@ -39,8 +39,14 @@ final class OverlapPolicyHandler
             return new OverlapHandleResult(proceed: true, lockAcquired: true);
         }
 
-        // Lock already held — apply policy
-        $policy = $this->resolvePolicy($run);
+        // Lock already held — apply policy. Held by this same run, it is the
+        // lock of its own attempt whose lease ran out: the lock can outlive
+        // the lease (by a rounded second, or by a longer SCHEDULER_LOCK_TTL).
+        // Skipped, the retry was lost for good; taken over, it could run
+        // beside that attempt if it is still going. It waits instead.
+        $policy = $this->lockManager->holderRunId($run->getLockKey()) === $run->getId()
+            ? OverlapPolicy::Delay
+            : $this->resolvePolicy($run);
 
         if ($policy === OverlapPolicy::Delay) {
             $delay = max(30, $run->getRetryBackoffSeconds() > 0 ? $run->getRetryBackoffSeconds() : 30);

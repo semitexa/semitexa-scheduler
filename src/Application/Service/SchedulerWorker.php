@@ -135,7 +135,7 @@ final class SchedulerWorker
             && $run->getStatus() === RunStatus::Succeeded->value;
     }
 
-    /** @return bool false when the outcome was discarded because the lease was lost */
+    /** @return bool false when the outcome was not recorded: the lease was lost, or writing the run's state failed */
     private function processRun(ScheduledRun $run, string $workerId): bool
     {
         $this->log("Processing run '{$run->getId()}' (job: {$run->getJobClass()})");
@@ -185,6 +185,15 @@ final class SchedulerWorker
             // Another worker took the run over while this one was executing
             // it; the outcome is theirs to record, so this one writes nothing.
             $this->log("Run '{$run->getId()}' outcome discarded: {$e->getMessage()}", 'warning');
+
+            return false;
+        } catch (\Throwable $e) {
+            // Writing the run's state or its history failed (the database
+            // refused the write, or the connection dropped). It used to stop the worker, and the
+            // supervisor's restart claimed the same run and stopped it again.
+            // The run keeps its lease until it lapses; the reclaim then
+            // decides, as for a worker that died.
+            $this->log("Run '{$run->getId()}': writing its state or history failed: " . get_class($e) . ': ' . $e->getMessage(), 'error');
 
             return false;
         } finally {

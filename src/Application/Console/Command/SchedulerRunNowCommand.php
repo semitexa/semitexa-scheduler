@@ -23,6 +23,8 @@ use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Domain\Enum\OverlapPolicy;
 use Semitexa\Scheduler\Domain\Enum\RunStatus;
 use Semitexa\Scheduler\Domain\Enum\SourceType;
+use Semitexa\Scheduler\Domain\Enum\TenantScheduleMode;
+use Semitexa\Tenancy\Domain\Contract\TenantRepositoryInterface;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -44,6 +46,9 @@ final class SchedulerRunNowCommand extends Command
 
     #[InjectAsReadonly]
     protected SchedulerLockRepositoryInterface $lockRepo;
+
+    #[InjectAsReadonly]
+    protected TenantRepositoryInterface $tenantRepo;
 
     protected function configure(): void
     {
@@ -84,6 +89,22 @@ final class SchedulerRunNowCommand extends Command
 
             if ($definition === null) {
                 $io->error("Schedule definition '{$scheduleKey}' not found.");
+                return Command::FAILURE;
+            }
+
+            // A per-tenant schedule run without --tenant ran once, tenant-blind,
+            // under a lock none of its tenant runs take; an unknown id ran a
+            // tenant that does not exist. An install without tenants runs it
+            // once, as the planner does.
+            if ($tenantId !== null && !$this->tenantRepo->exists($tenantId)) {
+                $io->error("Tenant '{$tenantId}' does not exist.");
+                return Command::FAILURE;
+            }
+            if ($tenantId === null
+                && TenantScheduleMode::tryFrom($definition->getTenantMode()) === TenantScheduleMode::PerTenant
+                && $this->tenantRepo->findAll() !== []
+            ) {
+                $io->error("Schedule '{$scheduleKey}' runs once per tenant: name the tenant with --tenant=<id>.");
                 return Command::FAILURE;
             }
 
