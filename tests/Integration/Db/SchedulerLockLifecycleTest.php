@@ -120,6 +120,27 @@ final class SchedulerLockLifecycleTest extends TestCase
         self::assertNotEmpty($this->db->execute('SELECT 1 FROM scheduler_locks WHERE lock_key = :k', ['k' => 'job:live'])->rows);
     }
 
+    /** Judged by the database's clock: a sweeping worker's clock ahead takes no live lock. */
+    #[Test]
+    public function a_sweep_from_a_clock_that_runs_ahead_keeps_a_live_lock(): void
+    {
+        $this->repository->acquire('job:live', Uuid7::generate(), 'w-1', 60);
+
+        self::assertSame(0, $this->repository->deleteExpired(new \DateTimeImmutable('+5 minutes')));
+        self::assertFalse($this->repository->acquire('job:live', Uuid7::generate(), 'w-2', 60));
+    }
+
+    #[Test]
+    public function the_expiry_is_written_by_the_database_clock(): void
+    {
+        $this->repository->acquire('job:a', Uuid7::generate(), 'w-1', 60);
+
+        $row = $this->lockRow('job:a');
+        $expected = $this->db->execute("SELECT strftime('%Y-%m-%d %H:%M:%f000', 'now', '+60 seconds') AS t")->rows[0]['t'];
+        self::assertMatchesRegularExpression('/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{6}$/', $row['expires_at'], 'six fractional digits, as PHP writes them');
+        self::assertEqualsWithDelta(strtotime($expected), strtotime($row['expires_at']), 2);
+    }
+
     private function seedLock(string $lockKey, string $worker, string $expiresAt): void
     {
         $now = new \DateTimeImmutable();

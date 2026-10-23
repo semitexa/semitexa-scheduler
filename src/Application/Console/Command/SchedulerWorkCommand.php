@@ -6,19 +6,21 @@ namespace Semitexa\Scheduler\Application\Console\Command;
 
 use Semitexa\Core\Attribute\AsCommand;
 use Semitexa\Core\Attribute\InjectAsReadonly;
+use Semitexa\Core\Lifecycle\StopSignals;
 use Semitexa\Core\Event\EventDispatcherInterface;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Scheduler\Application\Db\MySQL\Repository\SchedulerRunHistoryRepository;
-use Semitexa\Scheduler\Configuration\SchedulerConfig;
-use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
-use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
-use Semitexa\Scheduler\Domain\Contract\SchedulerLockRepositoryInterface;
-use Semitexa\Scheduler\Application\Service\RunLeaseManager;
-use Semitexa\Scheduler\Application\Service\SchedulerLockManager;
 use Semitexa\Scheduler\Application\Service\OverlapPolicyHandler;
 use Semitexa\Scheduler\Application\Service\RetryScheduler;
 use Semitexa\Scheduler\Application\Service\RunExecutor;
+use Semitexa\Scheduler\Application\Service\RunLeaseManager;
+use Semitexa\Scheduler\Application\Service\SchedulerLockManager;
 use Semitexa\Scheduler\Application\Service\SchedulerWorker;
+use Semitexa\Scheduler\Configuration\SchedulerConfig;
+use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
+use Semitexa\Scheduler\Domain\Contract\SchedulerLockRepositoryInterface;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -86,8 +88,14 @@ final class SchedulerWorkCommand extends Command
                 retryScheduler:  $retryScheduler,
                 historyRepository: $historyRepo,
                 config:          $config,
+                retention:       $this->runRepo instanceof ScheduledRunRetentionInterface ? $this->runRepo : null,
             );
             $worker->setOutput($output);
+            // docker stop: the run in hand finishes and is recorded, then the loop ends.
+            StopSignals::install(static fn () => $worker->stop(), static fn (string $m) => $output->writeln($m), 'the run in hand');
+            if (!$this->runRepo instanceof ScheduledRunRetentionInterface && $config->runRetentionDays > 0) {
+                $io->warning('Finished runs are not pruned: the run repository bound here does not implement ScheduledRunRetentionInterface.');
+            }
             $worker->run($pool);
         } catch (\Throwable $e) {
             $io->error('Scheduler worker failed: ' . $e->getMessage());

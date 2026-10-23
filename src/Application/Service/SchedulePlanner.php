@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Semitexa\Scheduler\Application\Service;
 
+use Semitexa\Core\Log\StaticLoggerBridge;
+use Semitexa\Orm\Exception\ConstraintViolationException;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
@@ -26,17 +28,54 @@ final class SchedulePlanner
         private readonly TenantOccurrenceExpander $tenantExpander,
     ) {}
 
-    public function plan(\DateTimeImmutable $now, ?OutputInterface $output = null): int
+    /**
+     * @param list<string>|null $declaredKeys keys the code still declares; a
+     *        row with any other key is passed over (the sync says so). Null,
+     *        or an empty list (discovery that found nothing is more likely
+     *        broken than right), plans every enabled row.
+     */
+    public function plan(\DateTimeImmutable $now, ?OutputInterface $output = null, ?array $declaredKeys = null): int
     {
         $total = 0;
+        $declared = $declaredKeys === null || $declaredKeys === [] ? null : array_flip($declaredKeys);
         foreach ($this->definitionRepository->findAllEnabled() as $definition) {
-            $total += $this->planDefinition($definition, $now, $output);
+            if ($declared !== null && !isset($declared[$definition->getScheduleKey()])) {
+                continue;
+            }
+            // A schedule whose job class is gone would fail every run. It is
+            // passed over, not disabled, so it plans again once the class is
+            // back (a deploy caught mid-sync, a package reinstalled). The sync
+            // that scheduler:plan runs first says so.
+            if (!class_exists($definition->getJobClass())) {
+                continue;
+            }
+            // One broken schedule (a policy typo, a bad cron or timezone) is
+            // reported and passed over: it used to fail the whole plan, and
+            // every schedule after it in key order stopped running.
+            try {
+                $total += $this->planDefinition($definition, $now, $output);
+            } catch (\ValueError | \InvalidArgumentException | \DateInvalidTimeZoneException $e) {
+                $message = "Schedule '{$definition->getScheduleKey()}' was not planned: {$e->getMessage()}";
+                $output?->writeln("<error>{$message}</error>");
+                StaticLoggerBridge::error('scheduler', $message);
+            }
         }
         return $total;
     }
 
     private function planDefinition(ScheduleDefinition $definition, \DateTimeImmutable $now, ?OutputInterface $output): int
     {
+        // Every policy is read before anything is calculated: a typo found
+        // halfway through logged a "dropped" warning that grew each minute.
+        $policy = MisfirePolicy::from($definition->getMisfirePolicy());
+        OverlapPolicy::from($definition->getOverlapPolicy());
+        $tenantMode = TenantScheduleMode::from($definition->getTenantMode());
+        // A recurring schedule has nowhere to name its tenant, and this mode
+        // was planned as global: the job ran tenant-blind.
+        if ($tenantMode === TenantScheduleMode::ExplicitTenant) {
+            throw new \InvalidArgumentException("tenantMode 'explicit_tenant' cannot name a tenant for a recurring schedule; use 'per_tenant', or dispatch the job with a tenantId.");
+        }
+
         $from = $definition->getPlanningCursorAt() ?? $now->modify('-1 minute');
 
         $occurrences = $this->calculator->getOccurrencesBetween(
@@ -51,12 +90,19 @@ final class SchedulePlanner
         }
 
         $toSchedule = $this->misfireResolver->resolve(
-            missedOccurrences: $occurrences,
-            policy: MisfirePolicy::from($definition->getMisfirePolicy()),
+            occurrences: $occurrences,
+            policy: $policy,
+            now: $now,
             maxCatchUpRuns: $definition->getMaxCatchUpRuns(),
         );
+        // A set, not in_array: an uncapped catch_up after a week down is ~10 000
+        // occurrences, and comparing each with each held the planner for seconds.
+        $kept = array_fill_keys(array_map(static fn (\DateTimeImmutable $at): int => $at->getTimestamp(), $toSchedule), true);
+        $this->reportDropped($definition, $policy, array_values(array_filter(
+            $occurrences,
+            static fn (\DateTimeImmutable $at): bool => !isset($kept[$at->getTimestamp()]),
+        )), $now, $output);
 
-        $tenantMode = TenantScheduleMode::from($definition->getTenantMode());
         $planned = 0;
 
         foreach ($toSchedule as $scheduledFor) {
@@ -76,6 +122,54 @@ final class SchedulePlanner
         );
 
         return $planned;
+    }
+
+    /**
+     * Say what the misfire policy dropped. A run lost to a restart gap just
+     * over the on-time threshold otherwise looks exactly like a schedule with
+     * nothing due. One entry per schedule, however long the outage.
+     *
+     * @param list<\DateTimeImmutable> $dropped sorted ascending
+     */
+    private function reportDropped(ScheduleDefinition $definition, MisfirePolicy $policy, array $dropped, \DateTimeImmutable $now, ?OutputInterface $output): void
+    {
+        if ($dropped === []) {
+            return;
+        }
+
+        $oldest = $dropped[0];
+        $newest = $dropped[count($dropped) - 1];
+        $late = static fn (\DateTimeImmutable $at): int => $now->getTimestamp() - $at->getTimestamp();
+        $key = $definition->getScheduleKey();
+        $message = count($dropped) === 1
+            ? sprintf("Schedule '%s' (misfirePolicy %s) dropped 1 missed occurrence: %s, %d s late.", $key, $policy->value, $oldest->format('Y-m-d H:i:s'), $late($oldest))
+            : sprintf(
+                "Schedule '%s' (misfirePolicy %s) dropped %d missed occurrences: %s (%d s late) to %s (%d s late).",
+                $key,
+                $policy->value,
+                count($dropped),
+                $oldest->format('Y-m-d H:i:s'),
+                $late($oldest),
+                $newest->format('Y-m-d H:i:s'),
+                $late($newest),
+            );
+
+        $output?->writeln('  ' . $message);
+        StaticLoggerBridge::warning('scheduler', $message, [
+            'schedule_key' => $key,
+            'misfire_policy' => $policy->value,
+            'dropped' => count($dropped),
+            'oldest' => $oldest->format(DATE_ATOM),
+            'oldest_late_seconds' => $late($oldest),
+            'newest' => $newest->format(DATE_ATOM),
+            'newest_late_seconds' => $late($newest),
+        ]);
+    }
+
+    /** Read again: another planner may have inserted it since the check before the insert. */
+    private function plannedMeanwhile(string $occurrenceKey): bool
+    {
+        return $this->runRepository->findByOccurrenceKey($occurrenceKey) !== null;
     }
 
     private function materializeRun(ScheduleDefinition $definition, ScheduledOccurrence $occurrence, ?OutputInterface $output): int
@@ -103,7 +197,17 @@ final class SchedulePlanner
         $run->setMaxAttempts($definition->getMaxAttempts());
         $run->setRetryBackoffSeconds($definition->getRetryBackoffSeconds());
 
-        $this->runRepository->save($run);
+        try {
+            $this->runRepository->save($run);
+        } catch (ConstraintViolationException $e) {
+            // Another planner (another worker container) inserted this
+            // occurrence after the check above: planned, not a failure. Any
+            // other violation is still one.
+            if ($this->plannedMeanwhile($occurrenceKey)) {
+                return 0;
+            }
+            throw $e;
+        }
 
         $output?->writeln(sprintf(
             '  Planned %s for <info>%s</info> at %s',

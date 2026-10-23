@@ -10,6 +10,7 @@ use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Application\Service\Uuid7;
+use Semitexa\Scheduler\Application\Service\DatabaseClock;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerLockResource;
 use Semitexa\Scheduler\Domain\Contract\SchedulerLockRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\SchedulerLock;
@@ -27,25 +28,21 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
 
     public function acquire(string $lockKey, string $runId, string $workerId, int $ttlSeconds): bool
     {
-        $now = new \DateTimeImmutable();
-        $nowStr = $now->format('Y-m-d H:i:s.u');
-        $expires = $now->modify("+{$ttlSeconds} seconds")->format('Y-m-d H:i:s.u');
+        $driver = $this->orm()->getDriver();
+        $now = DatabaseClock::now($driver);
+        $expires = DatabaseClock::in($driver, $ttlSeconds);
         $newId = Uuid7::toBytes(Uuid7::generate());
         $binRunId = Uuid7::toBytes($runId);
 
         try {
             $result = $this->adapter()->execute(
                 "INSERT INTO scheduler_locks (id, lock_key, run_id, worker_id, acquired_at, expires_at, created_at, updated_at)
-                 VALUES (:id, :lock_key, :run_id, :worker_id, :acquired, :expires, :created, :updated)",
+                 VALUES (:id, :lock_key, :run_id, :worker_id, {$now}, {$expires}, {$now}, {$now})",
                 [
                     'id' => $newId,
                     'lock_key' => $lockKey,
                     'run_id' => $binRunId,
                     'worker_id' => $workerId,
-                    'acquired' => $nowStr,
-                    'expires' => $expires,
-                    'created' => $nowStr,
-                    'updated' => $nowStr,
                 ],
             );
 
@@ -64,16 +61,12 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
 
         $replaced = $this->adapter()->execute(
             "UPDATE scheduler_locks
-             SET run_id = :run_id, worker_id = :worker_id, acquired_at = :acquired, expires_at = :expires, updated_at = :updated
-             WHERE lock_key = :lock_key AND expires_at < :now_guard",
+             SET run_id = :run_id, worker_id = :worker_id, acquired_at = {$now}, expires_at = {$expires}, updated_at = {$now}
+             WHERE lock_key = :lock_key AND expires_at < {$now}",
             [
                 'run_id' => $binRunId,
                 'worker_id' => $workerId,
-                'acquired' => $nowStr,
-                'expires' => $expires,
-                'updated' => $nowStr,
                 'lock_key' => $lockKey,
-                'now_guard' => $nowStr,
             ],
         );
 
@@ -82,14 +75,14 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
 
     public function extend(string $lockKey, string $workerId, int $ttlSeconds): bool
     {
-        $now = new \DateTimeImmutable();
-        $expires = $now->modify("+{$ttlSeconds} seconds")->format('Y-m-d H:i:s.u');
-        $nowStr = $now->format('Y-m-d H:i:s.u');
+        $driver = $this->orm()->getDriver();
+        $expires = DatabaseClock::in($driver, $ttlSeconds);
+        $now = DatabaseClock::now($driver);
 
         $result = $this->adapter()->execute(
-            "UPDATE scheduler_locks SET expires_at = :expires, updated_at = :now
+            "UPDATE scheduler_locks SET expires_at = {$expires}, updated_at = {$now}
              WHERE lock_key = :lock_key AND worker_id = :worker_id",
-            ['expires' => $expires, 'now' => $nowStr, 'lock_key' => $lockKey, 'worker_id' => $workerId],
+            ['lock_key' => $lockKey, 'worker_id' => $workerId],
         );
 
         if ($result->rowCount > 0) {
@@ -120,11 +113,11 @@ final class SchedulerLockRepository implements SchedulerLockRepositoryInterface
             ->fetchOneAs(SchedulerLock::class, $this->orm()->getMapperRegistry());
     }
 
+    /** Judged by the database's clock, as acquire() is; $now is the caller's, unused. */
     public function deleteExpired(\DateTimeImmutable $now): int
     {
         $result = $this->adapter()->execute(
-            "DELETE FROM scheduler_locks WHERE expires_at < :now",
-            ['now' => $now->format('Y-m-d H:i:s.u')],
+            'DELETE FROM scheduler_locks WHERE expires_at < ' . DatabaseClock::now($this->orm()->getDriver()),
         );
 
         return $result->rowCount;

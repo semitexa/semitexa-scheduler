@@ -10,12 +10,15 @@ use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Application\Service\Uuid7;
+use Semitexa\Scheduler\Application\Service\DatabaseClock;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
+use Semitexa\Scheduler\Domain\Enum\RunStatus;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
 #[SatisfiesRepositoryContract(of: ScheduledRunRepositoryInterface::class)]
-final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
+final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, ScheduledRunRetentionInterface
 {
     #[InjectAsReadonly]
     protected OrmManager $orm;
@@ -47,19 +50,19 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
 
     public function claimNextDue(string $pool, string $workerId, int $leaseTtlSeconds): ?string
     {
-        $now = new \DateTimeImmutable();
-        $nowStr = $now->format('Y-m-d H:i:s.u');
-        $leaseUntil = $now->modify("+{$leaseTtlSeconds} seconds")->format('Y-m-d H:i:s.u');
+        $driver = $this->orm()->getDriver();
+        $now = DatabaseClock::now($driver);
+        $leaseUntil = DatabaseClock::in($driver, $leaseTtlSeconds);
 
         $result = $this->adapter()->execute(
             "SELECT id FROM scheduler_runs
              WHERE pool = :pool
                AND status IN ('pending', 'retry_scheduled')
-               AND available_at <= :now_avail
-               AND (lease_expires_at IS NULL OR lease_expires_at < :now_lease)
+               AND available_at <= {$now}
+               AND (lease_expires_at IS NULL OR lease_expires_at < {$now})
              ORDER BY available_at ASC
              LIMIT 1",
-            ['pool' => $pool, 'now_avail' => $nowStr, 'now_lease' => $nowStr],
+            ['pool' => $pool],
         );
 
         $row = $result->rows[0] ?? null;
@@ -73,18 +76,14 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
             "UPDATE scheduler_runs
              SET status = 'claimed',
                  lease_owner = :worker,
-                 lease_expires_at = :lease_until,
-                 updated_at = :now_upd
+                 lease_expires_at = {$leaseUntil},
+                 updated_at = {$now}
              WHERE id = :id
                AND status IN ('pending', 'retry_scheduled')
-               AND available_at <= :now_avail
-               AND (lease_expires_at IS NULL OR lease_expires_at < :now_lease)",
+               AND available_at <= {$now}
+               AND (lease_expires_at IS NULL OR lease_expires_at < {$now})",
             [
                 'worker' => $workerId,
-                'lease_until' => $leaseUntil,
-                'now_upd' => $nowStr,
-                'now_avail' => $nowStr,
-                'now_lease' => $nowStr,
                 'id' => $candidateId,
             ],
         );
@@ -98,21 +97,18 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
 
     public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool
     {
-        $now = new \DateTimeImmutable();
-        $leaseUntil = $now->modify("+{$leaseTtlSeconds} seconds")->format('Y-m-d H:i:s.u');
-        $nowStr = $now->format('Y-m-d H:i:s.u');
+        $driver = $this->orm()->getDriver();
+        $leaseUntil = DatabaseClock::in($driver, $leaseTtlSeconds);
+        $now = DatabaseClock::now($driver);
         $binId = Uuid7::toBytes($runId);
 
         $result = $this->adapter()->execute(
             "UPDATE scheduler_runs
-             SET lease_expires_at = :lease_until,
-                 last_heartbeat_at = :now_beat,
-                 updated_at = :now_upd
+             SET lease_expires_at = {$leaseUntil},
+                 last_heartbeat_at = {$now},
+                 updated_at = {$now}
              WHERE id = :id AND lease_owner = :worker",
             [
-                'lease_until' => $leaseUntil,
-                'now_beat' => $nowStr,
-                'now_upd' => $nowStr,
                 'id' => $binId,
                 'worker' => $workerId,
             ],
@@ -174,22 +170,75 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
         )->rows !== [];
     }
 
+    /** Judged by the database's clock, as the claim is; $now is the caller's, unused. */
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
-        $nowStr = $now->format('Y-m-d H:i:s.u');
+        $nowSql = DatabaseClock::now($this->orm()->getDriver());
+        // A run whose lease lapsed while running has already had that attempt
+        // counted. Out of attempts, it fails here: sent back to pending every
+        // time, a job that kills its worker (a fatal error, out of memory) ran
+        // forever. A claimed run has not started, so it is only requeued.
+        $failed = $this->adapter()->execute(
+            "UPDATE scheduler_runs
+             SET status = 'failed',
+                 lease_owner = NULL,
+                 lease_expires_at = NULL,
+                 finished_at = {$nowSql},
+                 last_error = 'Its lease ran out before it finished (the worker stopped, or the job ran past the lease without renewLease()), and its attempts are used up.',
+                 updated_at = {$nowSql}
+             WHERE status = 'running'
+               AND lease_expires_at IS NOT NULL
+               AND lease_expires_at < {$nowSql}
+               AND attempt_count >= max_attempts",
+        );
+
         $result = $this->adapter()->execute(
             "UPDATE scheduler_runs
              SET status = 'pending',
                  lease_owner = NULL,
                  lease_expires_at = NULL,
-                 updated_at = :now_upd
+                 updated_at = {$nowSql}
              WHERE status IN ('claimed', 'running')
                AND lease_expires_at IS NOT NULL
-               AND lease_expires_at < :now_lease",
-            ['now_upd' => $nowStr, 'now_lease' => $nowStr],
+               AND lease_expires_at < {$nowSql}
+               AND (status = 'claimed' OR attempt_count < max_attempts)",
         );
 
-        return $result->rowCount;
+        return $failed->rowCount + $result->rowCount;
+    }
+
+    public function deleteFinishedBefore(\DateTimeImmutable $cutoff, int $limit): int
+    {
+        $finished = implode(', ', array_map(
+            static fn (RunStatus $s): string => "'{$s->value}'",
+            array_filter(RunStatus::cases(), static fn (RunStatus $s): bool => $s->isTerminal()),
+        ));
+        // No ORDER BY (it sorted the whole table every batch); the scan runs
+        // on idx_scheduler_runs_status_updated, so it reads only old rows.
+        $ids = array_column($this->adapter()->execute(
+            "SELECT id FROM scheduler_runs
+             WHERE status IN ({$finished}) AND updated_at < :cutoff
+             LIMIT " . max(1, min($limit, 500)),
+            ['cutoff' => $cutoff->format('Y-m-d H:i:s')],
+        )->rows, 'id');
+        if ($ids === []) {
+            return 0;
+        }
+
+        $params = [];
+        foreach (array_values($ids) as $i => $id) {
+            $params["id{$i}"] = $id;
+        }
+        $in = ':' . implode(', :', array_keys($params));
+
+        $this->adapter()->execute("DELETE FROM scheduler_run_history WHERE run_id IN ({$in})", $params);
+
+        // The status again: a run cannot change once finished, but the guard
+        // costs nothing and keeps a live row out of reach.
+        return $this->adapter()->execute(
+            "DELETE FROM scheduler_runs WHERE id IN ({$in}) AND status IN ({$finished})",
+            $params,
+        )->rowCount;
     }
 
     private function repository(): DomainRepository
@@ -210,12 +259,20 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface
         return $this->orm()->getAdapter();
     }
 
+    /**
+     * The persisted state — the id the insert made, above all — back into the
+     * caller's instance. Through reflection: the model's properties are
+     * private, and get_object_vars() from here saw none of them, so save()
+     * copied nothing and dispatchAt() returned an empty run id.
+     */
     private function copyIntoMutableDomain(object $source, ScheduledRun $target): void
     {
         $source instanceof ScheduledRun || throw new \InvalidArgumentException('Unexpected persisted domain model.');
 
-        foreach (get_object_vars($source) as $property => $value) {
-            $target->{$property} = $value;
+        foreach ((new \ReflectionObject($source))->getProperties() as $property) {
+            if (!$property->isStatic() && $property->isInitialized($source)) {
+                $property->setValue($target, $property->getValue($source));
+            }
         }
     }
 }

@@ -9,24 +9,36 @@ use Semitexa\Scheduler\Domain\Enum\MisfirePolicy;
 final class MisfirePolicyResolver
 {
     /**
-     * @param list<\DateTimeImmutable> $missedOccurrences sorted ascending (oldest first)
+     * How late an occurrence may be planned and still count as on time. The
+     * worker plans every 60 s, plus the time a planning run takes; an
+     * occurrence older than this was missed (an outage, a stopped worker).
+     */
+    public const ON_TIME_SECONDS = 120;
+
+    /**
+     * @param list<\DateTimeImmutable> $occurrences the occurrences since the planning cursor, sorted ascending (oldest first)
      * @return list<\DateTimeImmutable> occurrences to actually schedule
      */
     public function resolve(
-        array $missedOccurrences,
+        array $occurrences,
         MisfirePolicy $policy,
+        \DateTimeImmutable $now,
         ?int $maxCatchUpRuns = null,
     ): array {
-        if ($missedOccurrences === []) {
+        if ($occurrences === []) {
             return [];
         }
 
         return match ($policy) {
-            MisfirePolicy::Skip => [],
-            MisfirePolicy::RunOnce => [$missedOccurrences[count($missedOccurrences) - 1]],
+            // Skip drops the missed ones only: the occurrence due now still runs.
+            MisfirePolicy::Skip => array_values(array_filter(
+                $occurrences,
+                static fn (\DateTimeImmutable $at): bool => $now->getTimestamp() - $at->getTimestamp() <= self::ON_TIME_SECONDS,
+            )),
+            MisfirePolicy::RunOnce => [$occurrences[count($occurrences) - 1]],
             MisfirePolicy::CatchUp => array_slice(
-                $missedOccurrences,
-                max(0, count($missedOccurrences) - ($maxCatchUpRuns ?? PHP_INT_MAX)),
+                $occurrences,
+                max(0, count($occurrences) - ($maxCatchUpRuns ?? PHP_INT_MAX)),
             ),
         };
     }
