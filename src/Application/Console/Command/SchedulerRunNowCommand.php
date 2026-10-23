@@ -148,6 +148,11 @@ final class SchedulerRunNowCommand extends Command
             $this->runRepo->save($run);
 
             if ($inlineWorkerId !== null) {
+                // Rewritten by the database's clock, which the reclaim judges
+                // it by: a host whose clock runs behind had its run reclaimed
+                // and started again by a worker while it still ran inline.
+                $this->runRepo->renewLease($run->getId(), $inlineWorkerId, $config->leaseTtlSeconds);
+
                 return $this->runInline($run, $inlineWorkerId, $config, $io);
             }
 

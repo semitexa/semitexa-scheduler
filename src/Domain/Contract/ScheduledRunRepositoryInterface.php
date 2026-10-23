@@ -37,7 +37,8 @@ interface ScheduledRunRepositoryInterface
 
     /**
      * Reclaim runs whose lease has expired (crash recovery).
-     * Returns the number of rows reclaimed back to pending.
+     * Returns the number of rows reclaimed back to pending. A database
+     * implementation judges expiry by the database's clock and may ignore $now.
      */
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int;
 }

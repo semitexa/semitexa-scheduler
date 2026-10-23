@@ -10,6 +10,7 @@ use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Application\Service\Uuid7;
+use Semitexa\Scheduler\Application\Service\DatabaseClock;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
@@ -49,19 +50,19 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
 
     public function claimNextDue(string $pool, string $workerId, int $leaseTtlSeconds): ?string
     {
-        $now = new \DateTimeImmutable();
-        $nowStr = $now->format('Y-m-d H:i:s.u');
-        $leaseUntil = $now->modify("+{$leaseTtlSeconds} seconds")->format('Y-m-d H:i:s.u');
+        $driver = $this->orm()->getDriver();
+        $now = DatabaseClock::now($driver);
+        $leaseUntil = DatabaseClock::in($driver, $leaseTtlSeconds);
 
         $result = $this->adapter()->execute(
             "SELECT id FROM scheduler_runs
              WHERE pool = :pool
                AND status IN ('pending', 'retry_scheduled')
-               AND available_at <= :now_avail
-               AND (lease_expires_at IS NULL OR lease_expires_at < :now_lease)
+               AND available_at <= {$now}
+               AND (lease_expires_at IS NULL OR lease_expires_at < {$now})
              ORDER BY available_at ASC
              LIMIT 1",
-            ['pool' => $pool, 'now_avail' => $nowStr, 'now_lease' => $nowStr],
+            ['pool' => $pool],
         );
 
         $row = $result->rows[0] ?? null;
@@ -75,18 +76,14 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
             "UPDATE scheduler_runs
              SET status = 'claimed',
                  lease_owner = :worker,
-                 lease_expires_at = :lease_until,
-                 updated_at = :now_upd
+                 lease_expires_at = {$leaseUntil},
+                 updated_at = {$now}
              WHERE id = :id
                AND status IN ('pending', 'retry_scheduled')
-               AND available_at <= :now_avail
-               AND (lease_expires_at IS NULL OR lease_expires_at < :now_lease)",
+               AND available_at <= {$now}
+               AND (lease_expires_at IS NULL OR lease_expires_at < {$now})",
             [
                 'worker' => $workerId,
-                'lease_until' => $leaseUntil,
-                'now_upd' => $nowStr,
-                'now_avail' => $nowStr,
-                'now_lease' => $nowStr,
                 'id' => $candidateId,
             ],
         );
@@ -100,21 +97,18 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
 
     public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool
     {
-        $now = new \DateTimeImmutable();
-        $leaseUntil = $now->modify("+{$leaseTtlSeconds} seconds")->format('Y-m-d H:i:s.u');
-        $nowStr = $now->format('Y-m-d H:i:s.u');
+        $driver = $this->orm()->getDriver();
+        $leaseUntil = DatabaseClock::in($driver, $leaseTtlSeconds);
+        $now = DatabaseClock::now($driver);
         $binId = Uuid7::toBytes($runId);
 
         $result = $this->adapter()->execute(
             "UPDATE scheduler_runs
-             SET lease_expires_at = :lease_until,
-                 last_heartbeat_at = :now_beat,
-                 updated_at = :now_upd
+             SET lease_expires_at = {$leaseUntil},
+                 last_heartbeat_at = {$now},
+                 updated_at = {$now}
              WHERE id = :id AND lease_owner = :worker",
             [
-                'lease_until' => $leaseUntil,
-                'now_beat' => $nowStr,
-                'now_upd' => $nowStr,
                 'id' => $binId,
                 'worker' => $workerId,
             ],
@@ -176,9 +170,10 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
         )->rows !== [];
     }
 
+    /** Judged by the database's clock, as the claim is; $now is the caller's, unused. */
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
-        $nowStr = $now->format('Y-m-d H:i:s.u');
+        $nowSql = DatabaseClock::now($this->orm()->getDriver());
         // A run whose lease lapsed while running has already had that attempt
         // counted. Out of attempts, it fails here: sent back to pending every
         // time, a job that kills its worker (a fatal error, out of memory) ran
@@ -188,14 +183,13 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
              SET status = 'failed',
                  lease_owner = NULL,
                  lease_expires_at = NULL,
-                 finished_at = :now_fin,
+                 finished_at = {$nowSql},
                  last_error = 'Its lease ran out before it finished (the worker stopped, or the job ran past the lease without renewLease()), and its attempts are used up.',
-                 updated_at = :now_upd
+                 updated_at = {$nowSql}
              WHERE status = 'running'
                AND lease_expires_at IS NOT NULL
-               AND lease_expires_at < :now_lease
+               AND lease_expires_at < {$nowSql}
                AND attempt_count >= max_attempts",
-            ['now_fin' => $nowStr, 'now_upd' => $nowStr, 'now_lease' => $nowStr],
         );
 
         $result = $this->adapter()->execute(
@@ -203,12 +197,11 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
              SET status = 'pending',
                  lease_owner = NULL,
                  lease_expires_at = NULL,
-                 updated_at = :now_upd
+                 updated_at = {$nowSql}
              WHERE status IN ('claimed', 'running')
                AND lease_expires_at IS NOT NULL
-               AND lease_expires_at < :now_lease
+               AND lease_expires_at < {$nowSql}
                AND (status = 'claimed' OR attempt_count < max_attempts)",
-            ['now_upd' => $nowStr, 'now_lease' => $nowStr],
         );
 
         return $failed->rowCount + $result->rowCount;

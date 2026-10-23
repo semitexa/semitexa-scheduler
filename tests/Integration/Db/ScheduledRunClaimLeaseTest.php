@@ -136,6 +136,23 @@ final class ScheduledRunClaimLeaseTest extends TestCase
         self::assertSame('w-alive', $liveRow['lease_owner']);
     }
 
+    /**
+     * The database's clock judges a lease, not the sweeping worker's: one
+     * whose clock ran minutes ahead took over leases other workers held, and
+     * the job ran twice.
+     */
+    #[Test]
+    public function a_worker_whose_clock_runs_ahead_reclaims_no_live_lease(): void
+    {
+        $this->seedRun(status: 'pending', availableAt: '-1 minute');
+        $id = $this->repository->claimNextDue('default', 'w-1', 60);
+        self::assertNotNull($id);
+
+        self::assertSame(0, $this->repository->reclaimExpiredLeases(new \DateTimeImmutable('+5 minutes')));
+        self::assertSame('w-1', $this->rowFor($id)['lease_owner']);
+        self::assertNull($this->repository->claimNextDue('default', 'w-2', 60));
+    }
+
     #[Test]
     public function a_run_that_killed_its_worker_on_its_last_attempt_fails_instead_of_coming_back(): void
     {

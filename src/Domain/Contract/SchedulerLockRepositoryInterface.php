@@ -25,6 +25,6 @@ interface SchedulerLockRepositoryInterface
 
     public function findByKey(string $lockKey): ?SchedulerLock;
 
-    /** Delete expired locks. */
+    /** Delete expired locks. A database implementation judges expiry by the database's clock and may ignore $now. */
     public function deleteExpired(\DateTimeImmutable $now): int;
 }
