@@ -26,6 +26,7 @@ final class DelayedRunFactory
         ?string $lockKey = null,
         int $maxAttempts = 1,
         int $retryBackoffSeconds = 0,
+        ?string $occurrenceKey = null,
     ): string {
         if (!isset($this->runRepository)) {
             throw new \RuntimeException('ScheduledRunRepositoryInterface is not available.');
@@ -42,6 +43,7 @@ final class DelayedRunFactory
         $run->setAvailableAt($availableAt);
         $run->setMaxAttempts($maxAttempts);
         $run->setRetryBackoffSeconds($retryBackoffSeconds);
+        $run->setOccurrenceKey($occurrenceKey);
         $run->setPayloadJson($payload !== [] ? json_encode($payload, JSON_THROW_ON_ERROR) : null);
         $this->runRepository->save($run);
         return $run->getId();
