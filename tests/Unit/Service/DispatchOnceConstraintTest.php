@@ -38,6 +38,35 @@ final class DispatchOnceConstraintTest extends TestCase
         self::assertNull($sqlite->dispatchOnceAt('k1', \stdClass::class, new \DateTimeImmutable('+1 hour')));
     }
 
+    /** 64 slashes encode to 192 characters: with a 70-character key the row was refused by the 255 column. */
+    #[Test]
+    public function a_key_too_long_for_its_column_is_stored_by_its_hash(): void
+    {
+        $saved = [];
+        $runs = new class ($saved) implements ScheduledRunRepositoryInterface {
+            /** @param list<ScheduledRun> $saved */
+            public function __construct(private array &$saved) {}
+            public function findById(string $id): ?ScheduledRun { return null; }
+            public function findByOccurrenceKey(string $occurrenceKey): ?ScheduledRun { return null; }
+            public function save(ScheduledRun $entity): void { $this->saved[] = $entity; }
+            public function claimNextDue(string $pool, string $workerId, int $leaseTtlSeconds): ?string { return null; }
+            public function renewLease(string $runId, string $workerId, int $leaseTtlSeconds): bool { return false; }
+            public function finalizeIfOwned(ScheduledRun $run, ?string $expectedOwner): bool { return false; }
+            public function reclaimExpiredLeases(\DateTimeImmutable $now): int { return 0; }
+        };
+        $scheduler = self::wired($runs);
+        $tenant = str_repeat('/', 64);
+        $key = str_repeat('k', 70);
+
+        $scheduler->dispatchOnceAt('daily-report', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: 'museum');
+        $scheduler->dispatchOnceAt($key, \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: $tenant);
+
+        self::assertSame(
+            ['once:museum:daily-report', 'once#' . hash('sha256', 'once:' . str_repeat('%2F', 64) . ':' . $key)],
+            array_map(static fn (ScheduledRun $run): ?string => $run->getOccurrenceKey(), $saved),
+        );
+    }
+
     private static function scheduler(ConstraintViolationException $onSave): SchedulerService
     {
         $runs = new class ($onSave) implements ScheduledRunRepositoryInterface {
@@ -50,6 +79,12 @@ final class DispatchOnceConstraintTest extends TestCase
             public function finalizeIfOwned(ScheduledRun $run, ?string $expectedOwner): bool { return false; }
             public function reclaimExpiredLeases(\DateTimeImmutable $now): int { return 0; }
         };
+
+        return self::wired($runs);
+    }
+
+    private static function wired(ScheduledRunRepositoryInterface $runs): SchedulerService
+    {
         $factory = new DelayedRunFactory();
         (new \ReflectionProperty(DelayedRunFactory::class, 'runRepository'))->setValue($factory, $runs);
         $scheduler = new SchedulerService();

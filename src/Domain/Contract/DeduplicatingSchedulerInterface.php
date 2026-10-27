@@ -22,8 +22,9 @@ interface DeduplicatingSchedulerInterface extends SchedulerInterface
      * and its key is free again. For deduplicating work asked for twice at
      * about the same time, not for a once-ever guarantee.
      *
-     * Stored with a prefix and the tenant's id in 255 characters: keep the
-     * key well under 180.
+     * Stored with a prefix and the tenant's id in 255 characters; a key that
+     * would not fit is stored by its hash, so any length deduplicates, but a
+     * key under 180 stays readable in the table.
      *
      * @param array<mixed> $payload
      */

@@ -17,6 +17,9 @@ use Semitexa\Scheduler\Domain\Contract\SchedulerInterface;
 #[SatisfiesServiceContract(of: DeduplicatingSchedulerInterface::class)]
 final class SchedulerService implements DeduplicatingSchedulerInterface
 {
+    /** scheduler_runs.occurrence_key's length */
+    private const OCCURRENCE_KEY_LENGTH = 255;
+
     #[InjectAsReadonly]
     protected DelayedRunFactory $factory;
 
@@ -111,10 +114,17 @@ final class SchedulerService implements DeduplicatingSchedulerInterface
      * 'daily-report' got one run between them, and the second tenant's job
      * was never scheduled. The tenant id is url-encoded, so a ':' in it cannot
      * make two tenants' keys the same; no tenant is the empty segment.
+     *
+     * The column holds 255: a longer key (a tenant id of slashes, encoded
+     * three times over, and a fair key) was refused by strict MySQL and the
+     * run never scheduled. Such a key is kept by its hash instead, after
+     * 'once#', which no literal key starts with.
      */
     private static function storedOccurrenceKey(string $occurrenceKey, ?string $tenantId): string
     {
-        return 'once:' . rawurlencode($tenantId ?? '') . ':' . $occurrenceKey;
+        $key = 'once:' . rawurlencode($tenantId ?? '') . ':' . $occurrenceKey;
+
+        return strlen($key) <= self::OCCURRENCE_KEY_LENGTH ? $key : 'once#' . hash('sha256', $key);
     }
 
     /**
