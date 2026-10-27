@@ -30,14 +30,15 @@ final class SchedulePlanner
 
     /**
      * @param list<string>|null $declaredKeys keys the code still declares; a
-     *        row with any other key is passed over (the sync says so). Null,
-     *        or an empty list (discovery that found nothing is more likely
-     *        broken than right), plans every enabled row.
+     *        row with any other key is passed over (the sync says so). Null
+     *        (discovery that found no job is more likely broken than right)
+     *        plans every enabled row; an empty list plans none: jobs were
+     *        found, and none of them declares a usable key.
      */
     public function plan(\DateTimeImmutable $now, ?OutputInterface $output = null, ?array $declaredKeys = null): int
     {
         $total = 0;
-        $declared = $declaredKeys === null || $declaredKeys === [] ? null : array_flip($declaredKeys);
+        $declared = $declaredKeys === null ? null : array_flip($declaredKeys);
         foreach ($this->definitionRepository->findAllEnabled() as $definition) {
             if ($declared !== null && !isset($declared[$definition->getScheduleKey()])) {
                 continue;
@@ -51,13 +52,19 @@ final class SchedulePlanner
             }
             // One broken schedule (a policy typo, a bad cron or timezone) is
             // reported and passed over: it used to fail the whole plan, and
-            // every schedule after it in key order stopped running.
+            // every schedule after it in key order stopped running. What this
+            // hides: scheduler:plan still exits 0 for it, so this error entry
+            // and the output line are the only trace, and the entry carries
+            // the exception for that reason.
             try {
                 $total += $this->planDefinition($definition, $now, $output);
             } catch (\ValueError | \InvalidArgumentException | \DateInvalidTimeZoneException $e) {
                 $message = "Schedule '{$definition->getScheduleKey()}' was not planned: {$e->getMessage()}";
                 $output?->writeln("<error>{$message}</error>");
-                StaticLoggerBridge::error('scheduler', $message);
+                StaticLoggerBridge::error('scheduler', $message, [
+                    'schedule_key' => $definition->getScheduleKey(),
+                    'exception' => $e,
+                ]);
             }
         }
         return $total;

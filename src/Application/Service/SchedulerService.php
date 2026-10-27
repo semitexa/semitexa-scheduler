@@ -11,7 +11,10 @@ use Semitexa\Scheduler\Domain\Contract\DeduplicatingSchedulerInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\SchedulerInterface;
 
+// Both contracts: a consumer that needs dispatchOnceAt() injects the
+// deduplicating one, and the container resolved only the plain one.
 #[SatisfiesServiceContract(of: SchedulerInterface::class)]
+#[SatisfiesServiceContract(of: DeduplicatingSchedulerInterface::class)]
 final class SchedulerService implements DeduplicatingSchedulerInterface
 {
     #[InjectAsReadonly]
@@ -75,6 +78,7 @@ final class SchedulerService implements DeduplicatingSchedulerInterface
         if (!isset($this->factory)) {
             throw new \RuntimeException('DelayedRunFactory is not available.');
         }
+        $storedKey = self::storedOccurrenceKey($occurrenceKey, $tenantId);
         // The unique occurrence_key index decides: of two at once, one row.
         try {
             return $this->factory->create(
@@ -87,18 +91,30 @@ final class SchedulerService implements DeduplicatingSchedulerInterface
                 lockKey: $lockKey,
                 maxAttempts: $maxAttempts,
                 retryBackoffSeconds: $retryBackoffSeconds,
-                occurrenceKey: $occurrenceKey,
+                occurrenceKey: $storedKey,
             );
         } catch (ConstraintViolationException $e) {
             // Only the occurrence key's own index means "already scheduled":
             // any 23xxx (a NOT NULL, a foreign key) read as it, and a
             // workflow's retry was reported scheduled and never ran.
-            if (self::isOccurrenceDuplicate($e) || (isset($this->runs) && $this->runs->findByOccurrenceKey($occurrenceKey) !== null)) {
+            if (self::isOccurrenceDuplicate($e) || (isset($this->runs) && $this->runs->findByOccurrenceKey($storedKey) !== null)) {
                 return null;
             }
 
             throw $e;
         }
+    }
+
+    /**
+     * The key as stored: per tenant, and apart from the planner's own
+     * `schedule:…` keys in the same unique column. Two tenants dispatching
+     * 'daily-report' got one run between them, and the second tenant's job
+     * was never scheduled. The tenant id is url-encoded, so a ':' in it cannot
+     * make two tenants' keys the same; no tenant is the empty segment.
+     */
+    private static function storedOccurrenceKey(string $occurrenceKey, ?string $tenantId): string
+    {
+        return 'once:' . rawurlencode($tenantId ?? '') . ':' . $occurrenceKey;
     }
 
     /**

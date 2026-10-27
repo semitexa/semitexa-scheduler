@@ -96,8 +96,8 @@ final class SchedulerWorker
         $this->nextSweepAt = time() + 3600;
 
         $cutoff = (new \DateTimeImmutable())->modify("-{$this->config->runRetentionDays} days");
+        $deleted = 0;
         try {
-            $deleted = 0;
             for ($batch = 0; $batch < 20; $batch++) {
                 $n = $this->retention->deleteFinishedBefore($cutoff, 500);
                 $deleted += $n;
@@ -109,8 +109,11 @@ final class SchedulerWorker
                 $this->log("Deleted {$deleted} finished run(s) older than {$this->config->runRetentionDays} days.");
             }
         } catch (\Throwable $e) {
-            // Retention is housekeeping: it never stops the worker.
-            $this->log("Run retention sweep failed: {$e->getMessage()}", 'warning');
+            // Retention is housekeeping: it never stops the worker. What this
+            // hides: the batches this sweep did not reach wait for the next
+            // one, an hour later; the line says how many runs went before the
+            // failure, which the batches already done did delete.
+            $this->log("Run retention sweep failed after deleting {$deleted} run(s): {$e->getMessage()}", 'warning');
         }
     }
 

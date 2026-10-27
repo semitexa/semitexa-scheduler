@@ -85,6 +85,7 @@ final class SchedulerWorkerEndToEndTest extends TestCase
         // here also pins the process to UTC before any timestamp is taken.
         self::store()->readonly[SchedulerEndToEndJob::class] = new SchedulerEndToEndJob();
         SchedulerEndToEndJob::$calls = [];
+        SchedulerEndToEndJob::$onHandle = null;
 
         $this->runs = self::withOrm(new ScheduledRunRepository(), $this->orm);
         $this->history = self::withOrm(new SchedulerRunHistoryRepository(), $this->orm);
@@ -109,6 +110,7 @@ final class SchedulerWorkerEndToEndTest extends TestCase
         }
         unset(self::store()->readonly[SchedulerEndToEndJob::class]);
         SchedulerEndToEndJob::$calls = [];
+        SchedulerEndToEndJob::$onHandle = null;
 
         $db = $this->orm->getAdapter();
         $db->execute(
@@ -272,7 +274,13 @@ final class SchedulerWorkerEndToEndTest extends TestCase
     #[Test]
     public function a_class_that_is_not_a_scheduled_job_is_not_run(): void
     {
-        self::store()->readonly[SchedulerNotAJob::class] = new SchedulerNotAJob();
+        // The container's store and the static flag are process-wide: what
+        // was there before is put back, not cleared.
+        $store = self::store();
+        $hadEntry = array_key_exists(SchedulerNotAJob::class, $store->readonly);
+        $previousEntry = $store->readonly[SchedulerNotAJob::class] ?? null;
+        $previousCalled = SchedulerNotAJob::$called;
+        $store->readonly[SchedulerNotAJob::class] = new SchedulerNotAJob();
         SchedulerNotAJob::$called = false;
         try {
             $runId = $this->dispatch(jobClass: SchedulerNotAJob::class);
@@ -286,7 +294,12 @@ final class SchedulerWorkerEndToEndTest extends TestCase
             self::assertSame('failed', $row['status']);
             self::assertStringContainsString('is not a scheduled job', (string) $row['last_error']);
         } finally {
-            unset(self::store()->readonly[SchedulerNotAJob::class]);
+            if ($hadEntry) {
+                $store->readonly[SchedulerNotAJob::class] = $previousEntry;
+            } else {
+                unset($store->readonly[SchedulerNotAJob::class]);
+            }
+            SchedulerNotAJob::$called = $previousCalled;
         }
     }
 
@@ -303,6 +316,35 @@ final class SchedulerWorkerEndToEndTest extends TestCase
         self::assertSame([], $loop->claims, 'nothing claimed after the stop');
         self::assertCount(0, SchedulerEndToEndJob::$calls);
         self::assertSame('pending', $this->row($runId)['status'], 'left for the next worker');
+        self::assertStringContainsString('Scheduler worker stopped', $this->log());
+    }
+
+    /** SIGTERM while a job runs: that run is finished and recorded, and the next one is left for another worker. */
+    #[Test]
+    public function a_stop_asked_while_a_run_executes_finishes_that_run_and_claims_nothing_else(): void
+    {
+        $firstId = $this->dispatch(payload: ['order' => 1], tenantId: $this->tenant);
+        $secondId = $this->dispatch(payload: ['order' => 2], tenantId: $this->tenant);
+        [$worker, $loop] = $this->worker();
+        SchedulerEndToEndJob::$onHandle = static function () use ($worker): void {
+            $worker->stop();
+        };
+
+        $worker->run();
+
+        self::assertCount(1, $loop->claims, 'one claim, then the loop ended: ' . $this->log());
+        $finishedId = $loop->claims[0];
+        self::assertContains($finishedId, [$firstId, $secondId]);
+        $untouchedId = $finishedId === $firstId ? $secondId : $firstId;
+        self::assertSame([$finishedId], array_column(SchedulerEndToEndJob::$calls, 'runId'));
+        $finished = $this->row($finishedId);
+        self::assertSame('succeeded', $finished['status']);
+        self::assertNotNull($finished['finished_at']);
+        self::assertNull($finished['lease_owner']);
+        self::assertSame(['running', 'succeeded'], array_column($this->historyOf($finishedId), 'event_type'));
+        $untouched = $this->row($untouchedId);
+        self::assertSame('pending', $untouched['status'], 'left for the next worker');
+        self::assertSame(0, (int) $untouched['attempt_count']);
         self::assertStringContainsString('Scheduler worker stopped', $this->log());
     }
 
@@ -375,7 +417,9 @@ final class SchedulerWorkerEndToEndTest extends TestCase
         self::assertSame(2, (int) $row['attempt_count']);
         self::assertNull($row['lease_owner']);
         self::assertNull($row['lease_expires_at']);
-        self::assertNotContains($deadWorker, array_column($this->historyOf($runId), 'worker_id'));
+        $history = $this->historyOf($runId);
+        self::assertSame(['running', 'succeeded'], array_column($history, 'event_type'), 'the dead attempt wrote none; the new one wrote both');
+        self::assertNotContains($deadWorker, array_column($history, 'worker_id'));
         self::assertFalse(
             $this->runs->renewLease($runId, $deadWorker, 300),
             'the dead worker cannot renew a lease it lost',
@@ -517,6 +561,9 @@ final class SchedulerEndToEndJob implements ScheduledJobInterface
     /** @var list<array<string, mixed>> */
     public static array $calls = [];
 
+    /** Run inside handle(), after the call is recorded: a test's hook into a job in progress. */
+    public static ?\Closure $onHandle = null;
+
     public function handle(ScheduledJobContext $context): void
     {
         self::$calls[] = [
@@ -527,6 +574,9 @@ final class SchedulerEndToEndJob implements ScheduledJobInterface
             'ambientTenant' => CoroutineContextStore::get()?->getTenantId(),
             'payload' => $context->payload,
         ];
+        if (self::$onHandle !== null) {
+            (self::$onHandle)();
+        }
 
         if (isset($context->payload['fail'])) {
             throw new \RuntimeException($context->payload['fail'] . ' #' . $context->attemptNumber);

@@ -118,6 +118,49 @@ final class ScheduleDefinitionRegistrySyncTest extends TestCase
         self::assertStringContainsString(SyncFixtureMalformedJob::class, implode(' ', $problems));
     }
 
+    #[Test]
+    public function a_job_the_container_cannot_build_is_declared_but_not_planned(): void
+    {
+        // Its row was kept and planned, and every run failed when the
+        // container could not build the job.
+        $registry = $this->registry([SyncFixtureServiceJob::class, SyncFixturePlainJob::class], new SyncFixtureRepository());
+
+        self::assertSame(['fixture.service'], $registry->plannableKeys());
+    }
+
+    #[Test]
+    public function an_argument_that_does_not_evaluate_is_reported_and_the_plan_goes_on(): void
+    {
+        // sync() caught it; declaredKeys() evaluated the same arguments again
+        // and threw, and scheduler:plan planned nothing.
+        $repository = new SyncFixtureRepository();
+        $registry = $this->registry([SyncFixtureUndefinedConstantJob::class, SyncFixtureServiceJob::class], $repository);
+
+        $problems = $registry->sync();
+
+        self::assertSame(['fixture.service'], array_keys($repository->saved));
+        self::assertSame(
+            ["Scheduled job '" . SyncFixtureUndefinedConstantJob::class . "' has a malformed #[AsScheduledJob]: Undefined constant self::MISSING"],
+            $problems,
+        );
+        self::assertSame(['fixture.service'], $registry->declaredKeys());
+        self::assertSame(['fixture.service'], $registry->plannableKeys());
+    }
+
+    #[Test]
+    public function jobs_found_without_a_usable_key_declare_none_and_no_jobs_found_declare_nothing_known(): void
+    {
+        // Both were an empty list, and the planner took a misspelled `key:`
+        // for broken discovery: it planned the old row the job no longer names.
+        $keyless = $this->registry([SyncFixtureKeylessJob::class], new SyncFixtureRepository());
+        $none = $this->registry([], new SyncFixtureRepository());
+
+        self::assertSame([], $keyless->declaredKeys());
+        self::assertSame([], $keyless->plannableKeys());
+        self::assertNull($none->declaredKeys());
+        self::assertNull($none->plannableKeys());
+    }
+
     /** @param list<class-string> $classes */
     private function registry(array $classes, SyncFixtureRepository $repository): ScheduleDefinitionRegistry
     {
@@ -207,6 +250,26 @@ final class SyncFixturePlainJob implements ScheduledJobInterface
 #[AsService]
 #[AsScheduledJob(key: 'fixture.malformed', cron: '*/5 * * * *')]
 final class SyncFixtureMalformedJob implements ScheduledJobInterface
+{
+    public function handle(ScheduledJobContext $context): void
+    {
+    }
+}
+
+#[AsService]
+// @phpstan-ignore-next-line classConstant.notFound — the defect under test: a constant that does not exist
+#[AsScheduledJob(key: 'fixture.undefined', cronExpression: self::MISSING)]
+final class SyncFixtureUndefinedConstantJob implements ScheduledJobInterface
+{
+    public function handle(ScheduledJobContext $context): void
+    {
+    }
+}
+
+#[AsService]
+// @phpstan-ignore-next-line argument.missing — the defect under test: no key
+#[AsScheduledJob(cronExpression: '*/5 * * * *')]
+final class SyncFixtureKeylessJob implements ScheduledJobInterface
 {
     public function handle(ScheduledJobContext $context): void
     {

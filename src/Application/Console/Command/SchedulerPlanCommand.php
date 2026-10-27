@@ -79,7 +79,7 @@ final class SchedulerPlanCommand extends Command
             );
 
             $now     = new \DateTimeImmutable();
-            $planned = $planner->plan($now, $output, $this->registry->declaredKeys());
+            $planned = $planner->plan($now, $output, $this->registry->plannableKeys());
 
             $io->success("Planned {$planned} run(s).");
         } catch (\Throwable $e) {

@@ -103,7 +103,11 @@ final class CronOccurrenceCalculator
     private static function repeatsWallClock(\DateTime $at, \DateTimeZone $tz): bool
     {
         $ts = $at->getTimestamp();
-        $transitions = $tz->getTransitions($ts - 86400, $ts);
+        // A fixed offset ('+02:00') or an abbreviation ('EET') has no
+        // transitions, and PHP answers false (its stub says a list): count()
+        // of it threw a TypeError the planner does not catch, and the
+        // schedules after it stopped.
+        $transitions = $tz->getTransitions($ts - 86400, $ts) ?: [];
         if (count($transitions) < 2) {
             return false;
         }

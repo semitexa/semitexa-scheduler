@@ -91,14 +91,14 @@ final class ScheduleDefinitionRegistry
         // twice per occurrence. Not disabled either: after a rollback, or
         // while two images sync during a deploy, each would switch the
         // other's key off and the job would stop for good.
-        // Discovery that found nothing is more likely broken than right; the
-        // planner then plans every row, and this says nothing either.
+        // Discovery that found no job at all is more likely broken than right;
+        // the planner then plans every row, and this says nothing either.
         $declaredKeys = $this->declaredKeys();
-        $declared = array_flip($declaredKeys);
+        $declared = array_flip($declaredKeys ?? []);
         foreach ($this->repository()->findAllEnabled() as $definition) {
             if (!class_exists($definition->getJobClass())) {
                 $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: its job class {$definition->getJobClass()} no longer exists.";
-            } elseif ($declaredKeys !== [] && !isset($declared[$definition->getScheduleKey()])) {
+            } elseif ($declaredKeys !== null && !isset($declared[$definition->getScheduleKey()])) {
                 $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: no #[AsScheduledJob] declares it any more.";
             }
         }
@@ -112,14 +112,50 @@ final class ScheduleDefinitionRegistry
      * kept as they were, not orphaned. Read from the raw arguments, so a
      * malformed attribute still declares its key.
      *
-     * @return list<string>
+     * @return list<string>|null null when discovery found no #[AsScheduledJob]
+     *         class at all; an empty list when it found jobs and none of them
+     *         names a key (a misspelled `key:`), which is not the same thing
      */
-    public function declaredKeys(): array
+    public function declaredKeys(): ?array
     {
+        return $this->keys(buildableOnly: false);
+    }
+
+    /**
+     * The declared keys the planner may plan: a job that is not a service is
+     * left out. Its row was kept and planned, and every run of it failed when
+     * the container could not build the job; the sync already says why.
+     *
+     * @return list<string>|null null as for declaredKeys()
+     */
+    public function plannableKeys(): ?array
+    {
+        return $this->keys(buildableOnly: true);
+    }
+
+    /** @return list<string>|null */
+    private function keys(bool $buildableOnly): ?array
+    {
+        $classes = $this->classDiscovery()->findClassesWithAttribute(AsScheduledJob::class);
+        if ($classes === []) {
+            return null;
+        }
+
         $keys = [];
-        foreach ($this->classDiscovery()->findClassesWithAttribute(AsScheduledJob::class) as $class) {
-            foreach ((new \ReflectionClass($class))->getAttributes(AsScheduledJob::class) as $attribute) {
-                $arguments = $attribute->getArguments();
+        foreach ($classes as $class) {
+            $reflection = new \ReflectionClass($class);
+            if ($buildableOnly && $reflection->getAttributes(AsService::class) === []) {
+                continue;
+            }
+            foreach ($reflection->getAttributes(AsScheduledJob::class) as $attribute) {
+                // An argument that does not evaluate (an undefined constant)
+                // throws here as in sync(), which reports it: thrown out of
+                // here, it stopped scheduler:plan before any schedule planned.
+                try {
+                    $arguments = $attribute->getArguments();
+                } catch (\Error) {
+                    continue;
+                }
                 $key = $arguments['key'] ?? $arguments[0] ?? null;
                 if (is_string($key)) {
                     $keys[] = $key;

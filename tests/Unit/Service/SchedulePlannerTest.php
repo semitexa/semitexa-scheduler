@@ -278,9 +278,36 @@ final class SchedulePlannerTest extends TestCase
     {
         $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'kept'));
 
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'), null, null);
+
+        self::assertSame(['10:05', '10:10'], $this->runs->timesFor('kept'));
+    }
+
+    #[Test]
+    public function jobs_found_with_no_usable_key_plan_no_row(): void
+    {
+        // An empty list was taken for discovery that found nothing: a job
+        // whose `key:` was misspelled had its old row planned regardless.
+        $this->definitions->add($this->definition('*/5 * * * *', '2026-10-21 10:00', key: 'old-row'));
+
         $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'), null, []);
 
-        self::assertNotSame([], $this->runs->timesFor('kept'));
+        self::assertSame([], $this->runs->timesFor('old-row'));
+    }
+
+    #[Test]
+    public function a_fixed_offset_timezone_plans_its_time_of_day(): void
+    {
+        // '+02:00' has no transitions, and PHP answers false: count(false)
+        // threw a TypeError the planner does not catch, and the schedules
+        // after it stopped.
+        $this->definitions->add($this->definition('30 3 * * *', '2026-10-21 00:00', timezone: '+02:00', key: 'a-offset'));
+        $this->definitions->add($this->definition('0 * * * *', '2026-10-21 00:00', key: 'b-hourly'));
+
+        $this->planner()->plan(new \DateTimeImmutable('2026-10-21 02:00 UTC'));
+
+        self::assertSame(['01:30'], $this->runs->timesFor('a-offset'));
+        self::assertSame(['01:00', '02:00'], $this->runs->timesFor('b-hourly'));
     }
 
     #[Test]
@@ -293,6 +320,15 @@ final class SchedulePlannerTest extends TestCase
         $this->planner()->plan(new \DateTimeImmutable('2026-10-21 10:10 UTC'));
 
         self::assertNotSame([], $this->runs->timesFor('b-fine'));
+        // scheduler:plan still exits 0 for it: the log entry is the trace,
+        // and it carries the exception, not its message alone.
+        self::assertCount(1, $this->log->entries);
+        [$level, $message, $context] = $this->log->entries[0];
+        self::assertSame('error', $level);
+        self::assertSame("Schedule 'a-broken' was not planned: DateTimeZone::__construct(): Unknown or bad timezone (Europe/Nowhere)", $message);
+        self::assertSame(['schedule_key', 'exception', '_channel'], array_keys($context));
+        self::assertSame('a-broken', $context['schedule_key']);
+        self::assertInstanceOf(\DateInvalidTimeZoneException::class, $context['exception']);
     }
 
     #[Test]

@@ -151,7 +151,13 @@ final class SchedulerRunNowCommand extends Command
                 // Rewritten by the database's clock, which the reclaim judges
                 // it by: a host whose clock runs behind had its run reclaimed
                 // and started again by a worker while it still ran inline.
-                $this->runRepo->renewLease($run->getId(), $inlineWorkerId, $config->leaseTtlSeconds);
+                // Refused, the reclaim took the run already (this host's clock
+                // is that far behind): running it here would run it twice.
+                if (!$this->runRepo->renewLease($run->getId(), $inlineWorkerId, $config->leaseTtlSeconds)) {
+                    $io->error("Run '{$run->getId()}' lost its lease before it could run inline: a worker runs it instead. Check this host's clock against the database's.");
+
+                    return Command::FAILURE;
+                }
                 // Read back, as a worker reads a run it claimed: the executor
                 // saves the whole row, and the PHP-clock lease still on this
                 // object went back over the database's.
