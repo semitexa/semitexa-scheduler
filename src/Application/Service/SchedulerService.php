@@ -119,12 +119,21 @@ final class SchedulerService implements DeduplicatingSchedulerInterface
      * three times over, and a fair key) was refused by strict MySQL and the
      * run never scheduled. Such a key is kept by its hash instead, after
      * 'once#', which no literal key starts with.
+     *
+     * The column compares under utf8mb4_unicode_ci, which ignores case,
+     * accents and trailing spaces: 'Daily-report' found 'daily-report'
+     * already scheduled and its job never ran. A key is kept as written only
+     * when it is lowercase ASCII letters, digits and the punctuation that
+     * collation tells apart; any other is kept by its hash too, whose
+     * lowercase hex compares byte for byte.
      */
     private static function storedOccurrenceKey(string $occurrenceKey, ?string $tenantId): string
     {
         $key = 'once:' . rawurlencode($tenantId ?? '') . ':' . $occurrenceKey;
 
-        return strlen($key) <= self::OCCURRENCE_KEY_LENGTH ? $key : 'once#' . hash('sha256', $key);
+        return strlen($key) <= self::OCCURRENCE_KEY_LENGTH && preg_match('/^[a-z0-9:._~%-]+$/D', $key) === 1
+            ? $key
+            : 'once#' . hash('sha256', $key);
     }
 
     /**

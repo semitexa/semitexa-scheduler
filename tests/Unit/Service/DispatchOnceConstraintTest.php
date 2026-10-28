@@ -40,7 +40,7 @@ final class DispatchOnceConstraintTest extends TestCase
 
     /** 64 slashes encode to 192 characters: with a 70-character key the row was refused by the 255 column. */
     #[Test]
-    public function a_key_too_long_for_its_column_is_stored_by_its_hash(): void
+    public function a_key_too_long_for_its_column_or_its_collation_is_stored_by_its_hash(): void
     {
         $saved = [];
         $runs = new class ($saved) implements ScheduledRunRepositoryInterface {
@@ -60,9 +60,20 @@ final class DispatchOnceConstraintTest extends TestCase
 
         $scheduler->dispatchOnceAt('daily-report', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: 'museum');
         $scheduler->dispatchOnceAt($key, \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: $tenant);
+        // The column ignores case, accents and trailing spaces: these are kept
+        // by their hash, which it compares byte for byte.
+        $scheduler->dispatchOnceAt('Daily-report', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: 'museum');
+        $scheduler->dispatchOnceAt('café', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: 'museum');
+        $scheduler->dispatchOnceAt('daily-report ', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: 'museum');
 
         self::assertSame(
-            ['once:museum:daily-report', 'once#' . hash('sha256', 'once:' . str_repeat('%2F', 64) . ':' . $key)],
+            [
+                'once:museum:daily-report',
+                'once#' . hash('sha256', 'once:' . str_repeat('%2F', 64) . ':' . $key),
+                'once#' . hash('sha256', 'once:museum:Daily-report'),
+                'once#' . hash('sha256', 'once:museum:café'),
+                'once#' . hash('sha256', 'once:museum:daily-report '),
+            ],
             array_map(static fn (ScheduledRun $run): ?string => $run->getOccurrenceKey(), $saved),
         );
     }

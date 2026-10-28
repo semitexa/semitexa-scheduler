@@ -75,6 +75,25 @@ final class SchedulerDispatchOnceTest extends TestCase
     }
 
     #[Test]
+    public function keys_that_differ_only_in_case_or_accent_are_two_keys(): void
+    {
+        // The column compares under utf8mb4_unicode_ci: 'Daily-report' was
+        // reported scheduled because 'daily-report' was, and never ran.
+        $scheduler = $this->scheduler($this->orm);
+        $lower = $scheduler->dispatchOnceAt($this->key, \stdClass::class, new \DateTimeImmutable('+1 hour'), ['k' => 'lower'], pool: $this->pool);
+        $upper = $scheduler->dispatchOnceAt(ucfirst($this->key), \stdClass::class, new \DateTimeImmutable('+1 hour'), ['k' => 'upper'], pool: $this->pool);
+        $accent = $scheduler->dispatchOnceAt('é' . $this->key, \stdClass::class, new \DateTimeImmutable('+1 hour'), ['k' => 'accent'], pool: $this->pool);
+        $plain = $scheduler->dispatchOnceAt('e' . $this->key, \stdClass::class, new \DateTimeImmutable('+1 hour'), ['k' => 'plain'], pool: $this->pool);
+        $upperAgain = $this->scheduler($this->other)->dispatchOnceAt(ucfirst($this->key), \stdClass::class, new \DateTimeImmutable('+1 hour'), ['k' => 'upper2'], pool: $this->pool);
+
+        self::assertNull($upperAgain, 'the same key, written the same way, is still taken');
+        self::assertEqualsCanonicalizing(
+            [[$lower, '{"k":"lower"}'], [$upper, '{"k":"upper"}'], [$accent, '{"k":"accent"}'], [$plain, '{"k":"plain"}']],
+            $this->rows(),
+        );
+    }
+
+    #[Test]
     public function a_consumer_can_inject_the_deduplicating_scheduler(): void
     {
         // SchedulerService advertised SchedulerInterface only, so a property
