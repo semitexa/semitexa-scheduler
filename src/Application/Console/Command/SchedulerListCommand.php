@@ -46,7 +46,14 @@ final class SchedulerListCommand extends Command
             foreach ($definitions as $def) {
                 try {
                     $next = $calculator->getNextOccurrence($def->getCronExpression(), $now, $def->getTimezone());
-                    $nextStr = $next->format('Y-m-d H:i:s') . ' (' . $def->getTimezone() . ')';
+                    // The calculator answers in UTC; it was printed under the
+                    // row's timezone label, so a 03:00 Kyiv job read 00:00.
+                    $nextStr = $def->getTimezone() === 'UTC'
+                        ? $next->format('Y-m-d H:i:s') . ' (UTC)'
+                        : $next->setTimezone(new \DateTimeZone($def->getTimezone()))->format('Y-m-d H:i:s')
+                            . ' (' . $def->getTimezone() . '; '
+                            . $next->format($next->format('Y-m-d') === $next->setTimezone(new \DateTimeZone($def->getTimezone()))->format('Y-m-d') ? 'H:i' : 'Y-m-d H:i')
+                            . ' UTC)';
                 } catch (\Throwable) {
                     $nextStr = '(invalid expression)';
                 }
@@ -59,7 +66,7 @@ final class SchedulerListCommand extends Command
                     $def->getOverlapPolicy(),
                     $def->getMisfirePolicy(),
                     $def->getTenantMode(),
-                    $def->getPlanningCursorAt()?->format('Y-m-d H:i:s') ?? 'never',
+                    $def->getPlanningCursorAt() !== null ? $def->getPlanningCursorAt()->format('Y-m-d H:i:s') . ' UTC' : 'never',
                 ];
             }
 

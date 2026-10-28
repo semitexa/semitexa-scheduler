@@ -30,6 +30,11 @@
         "semitexa-module": {
             "name": "scheduler",
             "description": "Recurring and delayed background jobs: cron schedules, one-off delayed jobs, lease workers, overlap protection"
+        },
+        "semitexa": {
+            "floors": {
+                "semitexa/core": "next"
+            }
         }
     },
     "keywords": [

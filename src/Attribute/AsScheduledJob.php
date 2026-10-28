@@ -45,7 +45,8 @@ final class AsScheduledJob
      * tick and takes every OTHER job's planning down with it. Named loudly,
      * because the operator who set it is the only one who can fix it.
      *
-     * @throws \InvalidArgumentException when the resolved expression is not a cron
+     * @throws \InvalidArgumentException when the resolved expression is not a
+     *         cron, or is one that never matches a date
      */
     public function cron(): string
     {
@@ -54,6 +55,19 @@ final class AsScheduledJob
         if ($resolved === '' || !CronExpression::isValidExpression($resolved)) {
             throw new \InvalidArgumentException(sprintf(
                 'Schedule "%s": "%s" is not a valid cron expression (declared as "%s").',
+                $this->key,
+                $resolved,
+                $this->cronExpression,
+            ));
+        }
+
+        // One that parses can still never match (`0 0 31 2 *`, 31 February):
+        // only a calculation finds out.
+        try {
+            (new CronExpression($resolved))->getNextRunDate();
+        } catch (\RuntimeException) {
+            throw new \InvalidArgumentException(sprintf(
+                'Schedule "%s": "%s" never matches a date (declared as "%s").',
                 $this->key,
                 $resolved,
                 $this->cronExpression,

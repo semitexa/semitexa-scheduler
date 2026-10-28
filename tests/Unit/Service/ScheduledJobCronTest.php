@@ -50,4 +50,20 @@ final class ScheduledJobCronTest extends TestCase
         $this->expectExceptionMessageMatches('/test\.broken/');
         $job->cron();
     }
+
+    public function testACronThatNeverMatchesIsRefused(): void
+    {
+        $job = new AsScheduledJob(key: 'test.february', cronExpression: '0 0 31 2 *');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/test\.february.*never matches/');
+        $job->cron();
+    }
+
+    public function testALeapDayIsAccepted(): void
+    {
+        $job = new AsScheduledJob(key: 'test.leap', cronExpression: '0 0 29 2 *');
+
+        self::assertSame('0 0 29 2 *', $job->cron());
+    }
 }

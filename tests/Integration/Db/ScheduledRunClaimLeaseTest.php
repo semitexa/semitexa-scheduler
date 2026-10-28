@@ -36,6 +36,10 @@ final class ScheduledRunClaimLeaseTest extends TestCase
                 lease_owner TEXT,
                 lease_expires_at TEXT,
                 last_heartbeat_at TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 1,
+                finished_at TEXT,
+                last_error TEXT,
                 updated_at TEXT
             )',
         );
@@ -132,6 +136,51 @@ final class ScheduledRunClaimLeaseTest extends TestCase
         self::assertSame('w-alive', $liveRow['lease_owner']);
     }
 
+    /**
+     * The database's clock judges a lease, not the sweeping worker's: one
+     * whose clock ran minutes ahead took over leases other workers held, and
+     * the job ran twice.
+     */
+    #[Test]
+    public function a_worker_whose_clock_runs_ahead_reclaims_no_live_lease(): void
+    {
+        $this->seedRun(status: 'pending', availableAt: '-1 minute');
+        $id = $this->repository->claimNextDue('default', 'w-1', 60);
+        self::assertNotNull($id);
+
+        self::assertSame(0, $this->repository->reclaimExpiredLeases(new \DateTimeImmutable('+5 minutes')));
+        self::assertSame('w-1', $this->rowFor($id)['lease_owner']);
+        self::assertNull($this->repository->claimNextDue('default', 'w-2', 60));
+    }
+
+    #[Test]
+    public function a_run_that_killed_its_worker_on_its_last_attempt_fails_instead_of_coming_back(): void
+    {
+        // Its attempt was counted when it started; sent back to pending each
+        // time, a job that crashes its worker ran forever.
+        $crashed = $this->seedRun(status: 'running', availableAt: '-10 minutes', leaseOwner: 'w-dead', leaseExpiresAt: '-1 minute');
+        $this->db->execute('UPDATE scheduler_runs SET attempt_count = 1, max_attempts = 1 WHERE id = :id', ['id' => Uuid7::toBytes($crashed)]);
+        $retryable = $this->seedRun(status: 'running', availableAt: '-10 minutes', leaseOwner: 'w-dead', leaseExpiresAt: '-1 minute');
+        $this->db->execute('UPDATE scheduler_runs SET attempt_count = 1, max_attempts = 3 WHERE id = :id', ['id' => Uuid7::toBytes($retryable)]);
+
+        self::assertSame(2, $this->repository->reclaimExpiredLeases(new \DateTimeImmutable()));
+
+        self::assertSame('failed', $this->rowFor($crashed)['status']);
+        self::assertNotNull($this->rowFor($crashed)['last_error']);
+        self::assertSame('pending', $this->rowFor($retryable)['status']);
+    }
+
+    #[Test]
+    public function a_claimed_run_whose_lease_lapsed_is_requeued_even_with_no_attempts_left(): void
+    {
+        // A claimed run never started, so no attempt of it was spent.
+        $claimed = $this->seedRun(status: 'claimed', availableAt: '-10 minutes', leaseOwner: 'w-dead', leaseExpiresAt: '-1 minute');
+        $this->db->execute('UPDATE scheduler_runs SET attempt_count = 0, max_attempts = 0 WHERE id = :id', ['id' => Uuid7::toBytes($claimed)]);
+
+        self::assertSame(1, $this->repository->reclaimExpiredLeases(new \DateTimeImmutable()));
+        self::assertSame('pending', $this->rowFor($claimed)['status']);
+    }
+
     #[Test]
     public function reclaimed_run_becomes_claimable_again(): void
     {
@@ -140,6 +189,50 @@ final class ScheduledRunClaimLeaseTest extends TestCase
         $this->repository->reclaimExpiredLeases(new \DateTimeImmutable());
 
         self::assertNotNull($this->repository->claimNextDue('default', 'w-new', 60));
+    }
+
+    #[Test]
+    public function finished_runs_past_retention_go_with_their_history_and_nothing_else_does(): void
+    {
+        // Nothing deleted them: a job planned every minute added a run and
+        // its history rows each time, forever.
+        $this->db->execute('CREATE TABLE scheduler_run_history (id BLOB PRIMARY KEY, run_id BLOB NOT NULL, event_type TEXT)');
+        $old = $this->seedRun(status: 'succeeded', availableAt: '-40 days');
+        $oldPending = $this->seedRun(status: 'pending', availableAt: '-40 days');
+        // Kept: finished a day ago (updated_at is when it finished).
+        $recent = $this->seedRun(status: 'failed', availableAt: '-40 days');
+        $this->db->execute("UPDATE scheduler_runs SET updated_at = :at WHERE id IN (:a, :b)", [
+            'at' => (new \DateTimeImmutable('-40 days'))->format('Y-m-d H:i:s.u'),
+            'a' => Uuid7::toBytes($old),
+            'b' => Uuid7::toBytes($oldPending),
+        ]);
+        foreach ([$old, $old, $recent] as $runId) {
+            $this->db->execute('INSERT INTO scheduler_run_history (id, run_id, event_type) VALUES (:id, :run, :e)', [
+                'id' => Uuid7::toBytes(Uuid7::generate()), 'run' => Uuid7::toBytes($runId), 'e' => 'succeeded',
+            ]);
+        }
+
+        $this->db->execute("UPDATE scheduler_runs SET updated_at = :at WHERE id = :r", [
+            'at' => (new \DateTimeImmutable('-1 day'))->format('Y-m-d H:i:s.u'),
+            'r' => Uuid7::toBytes($recent),
+        ]);
+        $cancelled = $this->seedRun(status: 'cancelled', availableAt: '-40 days');
+        $this->db->execute("UPDATE scheduler_runs SET updated_at = :at WHERE id = :c", [
+            'at' => (new \DateTimeImmutable('-40 days'))->format('Y-m-d H:i:s.u'),
+            'c' => Uuid7::toBytes($cancelled),
+        ]);
+
+        // In batches: one per call.
+        self::assertSame(1, $this->repository->deleteFinishedBefore(new \DateTimeImmutable('-30 days'), 1));
+        self::assertSame(1, $this->repository->deleteFinishedBefore(new \DateTimeImmutable('-30 days'), 1));
+        self::assertSame(0, $this->repository->deleteFinishedBefore(new \DateTimeImmutable('-30 days'), 1));
+
+        $left = array_map(static fn (array $r): string => Uuid7::fromBytes($r['id']), $this->db->execute('SELECT id FROM scheduler_runs')->rows);
+        sort($left);
+        $expected = [$oldPending, $recent];
+        sort($expected);
+        self::assertSame($expected, $left, 'a pending run is never removed, however old');
+        self::assertSame(1, count($this->db->execute('SELECT 1 FROM scheduler_run_history')->rows), 'only the deleted run\'s history went');
     }
 
     private function seedRun(

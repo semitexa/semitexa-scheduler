@@ -28,6 +28,12 @@ final class SchedulerLockManager
         return $this->lockRepository->extend($lockKey, $workerId, $this->lockTtlSeconds);
     }
 
+    /** The run that holds the lock now, or null when nobody does. */
+    public function holderRunId(string $lockKey): ?string
+    {
+        return $this->lockRepository->findByKey($lockKey)?->getRunId();
+    }
+
     public function cleanup(\DateTimeImmutable $now): int
     {
         return $this->lockRepository->deleteExpired($now);

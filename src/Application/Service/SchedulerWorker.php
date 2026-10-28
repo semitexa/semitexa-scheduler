@@ -7,6 +7,7 @@ namespace Semitexa\Scheduler\Application\Service;
 use Semitexa\Scheduler\Application\Db\MySQL\Repository\SchedulerRunHistoryRepository;
 use Semitexa\Scheduler\Configuration\SchedulerConfig;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Scheduler\Domain\Enum\RunStatus;
 use Semitexa\Scheduler\Domain\Exception\LeaseLostException;
@@ -18,6 +19,7 @@ final class SchedulerWorker
 {
     private ?OutputInterface $output = null;
     private bool $shouldStop = false;
+    private int $nextSweepAt = 0;
 
     public function __construct(
         private readonly RunLeaseManager $leaseManager,
@@ -28,6 +30,7 @@ final class SchedulerWorker
         private readonly RetryScheduler $retryScheduler,
         private readonly SchedulerRunHistoryRepository $historyRepository,
         private readonly SchedulerConfig $config,
+        private readonly ?ScheduledRunRetentionInterface $retention = null,
     ) {}
 
     public function setOutput(?OutputInterface $output): void
@@ -52,6 +55,14 @@ final class SchedulerWorker
             // Clean up stale locks
             $this->lockManager->cleanup(new \DateTimeImmutable());
 
+            $this->sweepOldRuns();
+
+            // A stop asked while this pass swept and reclaimed (SIGTERM lands
+            // anywhere): claiming now would start a whole new job after it.
+            if ($this->shouldStop) {
+                break;
+            }
+
             // Claim next due run
             $runId = $this->leaseManager->claimNextDue($pool, $workerId);
 
@@ -67,6 +78,42 @@ final class SchedulerWorker
             }
 
             $this->processRun($run, $workerId);
+        }
+
+        $this->log('Scheduler worker stopped');
+    }
+
+    /**
+     * Finished runs older than SCHEDULER_RETENTION_DAYS go, with their history,
+     * at most once an hour per worker: nothing deleted them, and a job planned
+     * every minute added a run and its history rows each time, forever.
+     */
+    private function sweepOldRuns(): void
+    {
+        if ($this->retention === null || $this->config->runRetentionDays <= 0 || time() < $this->nextSweepAt) {
+            return;
+        }
+        $this->nextSweepAt = time() + 3600;
+
+        $cutoff = (new \DateTimeImmutable())->modify("-{$this->config->runRetentionDays} days");
+        $deleted = 0;
+        try {
+            for ($batch = 0; $batch < 20; $batch++) {
+                $n = $this->retention->deleteFinishedBefore($cutoff, 500);
+                $deleted += $n;
+                if ($n < 500) {
+                    break;
+                }
+            }
+            if ($deleted > 0) {
+                $this->log("Deleted {$deleted} finished run(s) older than {$this->config->runRetentionDays} days.");
+            }
+        } catch (\Throwable $e) {
+            // Retention is housekeeping: it never stops the worker. What this
+            // hides: the batches this sweep did not reach wait for the next
+            // one, an hour later; the line says how many runs went before the
+            // failure, which the batches already done did delete.
+            $this->log("Run retention sweep failed after deleting {$deleted} run(s): {$e->getMessage()}", 'warning');
         }
     }
 
@@ -84,19 +131,22 @@ final class SchedulerWorker
      */
     public function processSingle(ScheduledRun $run, string $workerId): bool
     {
-        $this->processRun($run, $workerId);
-
-        return $run->getStatus() === RunStatus::Succeeded->value;
+        // The in-memory status says succeeded even when the outcome was
+        // discarded (the lease was lost meanwhile): only a recorded success
+        // counts.
+        return $this->processRun($run, $workerId)
+            && $run->getStatus() === RunStatus::Succeeded->value;
     }
 
-    private function processRun(ScheduledRun $run, string $workerId): void
+    /** @return bool false when the outcome was not recorded: the lease was lost, or writing the run's state failed */
+    private function processRun(ScheduledRun $run, string $workerId): bool
     {
         $this->log("Processing run '{$run->getId()}' (job: {$run->getJobClass()})");
 
         $overlapResult = $this->overlapHandler->handle($run, $workerId, $this->output);
 
         if (!$overlapResult->proceed) {
-            return;
+            return true;
         }
 
         $heartbeat = new LeaseHeartbeat(
@@ -119,10 +169,17 @@ final class SchedulerWorker
                 if (!$this->runRepository->finalizeIfOwned($run, $owner)) {
                     throw LeaseLostException::forRun($run->getId(), $workerId);
                 }
-                $this->historyRepository->append(
-                    $run->getId(), 'succeeded', 'running', RunStatus::Succeeded->value,
-                    $workerId, 'Job completed successfully',
-                );
+                // The run is recorded as succeeded from here on: a history row
+                // that fails to land is logged, not reported as a failed run
+                // (scheduler:run-now --inline would invite running it again).
+                try {
+                    $this->historyRepository->append(
+                        $run->getId(), 'succeeded', 'running', RunStatus::Succeeded->value,
+                        $workerId, 'Job completed successfully',
+                    );
+                } catch (\Throwable $e) {
+                    $this->log("Run '{$run->getId()}' succeeded, but writing its history failed: " . get_class($e) . ': ' . $e->getMessage(), 'error');
+                }
                 $this->log("Run '{$run->getId()}' succeeded.");
             } else {
                 $error = $result->error ?? 'Unknown error';
@@ -138,11 +195,31 @@ final class SchedulerWorker
             // Another worker took the run over while this one was executing
             // it; the outcome is theirs to record, so this one writes nothing.
             $this->log("Run '{$run->getId()}' outcome discarded: {$e->getMessage()}", 'warning');
+
+            return false;
+        } catch (\Throwable $e) {
+            // Writing the run's state or its history failed (the database
+            // refused the write, or the connection dropped). It used to stop the worker, and the
+            // supervisor's restart claimed the same run and stopped it again.
+            // The run keeps its lease until it lapses; the reclaim then
+            // decides, as for a worker that died.
+            $this->log("Run '{$run->getId()}': writing its state or history failed: " . get_class($e) . ': ' . $e->getMessage(), 'error');
+
+            return false;
         } finally {
             if ($overlapResult->lockAcquired && $run->getLockKey() !== null) {
-                $this->lockManager->release($run->getLockKey(), $workerId);
+                // The outcome is recorded (or deliberately not) by now: a
+                // release the database refuses must not replace it with an
+                // exception. The lock is left to expire after its TTL.
+                try {
+                    $this->lockManager->release($run->getLockKey(), $workerId);
+                } catch (\Throwable $e) {
+                    $this->log("Run '{$run->getId()}': releasing lock '{$run->getLockKey()}' failed, it expires on its own: " . get_class($e) . ': ' . $e->getMessage(), 'error');
+                }
             }
         }
+
+        return true;
     }
 
     private function log(string $message, string $level = 'info'): void
