@@ -208,7 +208,14 @@ final class SchedulerWorker
             return false;
         } finally {
             if ($overlapResult->lockAcquired && $run->getLockKey() !== null) {
-                $this->lockManager->release($run->getLockKey(), $workerId);
+                // The outcome is recorded (or deliberately not) by now: a
+                // release the database refuses must not replace it with an
+                // exception. The lock is left to expire after its TTL.
+                try {
+                    $this->lockManager->release($run->getLockKey(), $workerId);
+                } catch (\Throwable $e) {
+                    $this->log("Run '{$run->getId()}': releasing lock '{$run->getLockKey()}' failed, it expires on its own: " . get_class($e) . ': ' . $e->getMessage(), 'error');
+                }
             }
         }
 

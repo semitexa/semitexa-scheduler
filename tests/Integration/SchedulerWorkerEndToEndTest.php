@@ -30,6 +30,8 @@ use Semitexa\Scheduler\Application\Service\SchedulerWorker;
 use Semitexa\Scheduler\Configuration\SchedulerConfig;
 use Semitexa\Scheduler\Domain\Contract\ScheduledJobInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\SchedulerLockRepositoryInterface;
+use Semitexa\Scheduler\Domain\Model\SchedulerLock;
 use Semitexa\Scheduler\Domain\Model\ScheduledJobContext;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 use Semitexa\Tenancy\Context\CoroutineContextStore;
@@ -119,6 +121,7 @@ final class SchedulerWorkerEndToEndTest extends TestCase
             ['pool' => $this->pool],
         );
         $db->execute('DELETE FROM scheduler_runs WHERE pool = :pool', ['pool' => $this->pool]);
+        $db->execute('DELETE FROM scheduler_locks WHERE lock_key = :key', ['key' => $this->pool . ':lock']);
         $this->orm->shutdown();
     }
 
@@ -476,17 +479,44 @@ final class SchedulerWorkerEndToEndTest extends TestCase
     }
 
     /**
+     * The lock was released in finally: a release the database refused
+     * escaped it and replaced the recorded success with an exception, so
+     * scheduler:run-now --inline said the run failed.
+     */
+    #[Test]
+    public function a_single_run_whose_lock_cannot_be_released_is_still_a_success(): void
+    {
+        $runId = $this->dispatch();
+        $run = $this->runs->findById($runId);
+        self::assertNotNull($run);
+        $lockKey = $this->pool . ':lock';
+        $run->setLockKey($lockKey);
+        [$worker] = $this->worker(lockRepository: new ReleaseRefusedLockRepository($this->locks));
+
+        self::assertTrue($worker->processSingle($run, 'run-now-inline-test'));
+        self::assertCount(1, SchedulerEndToEndJob::$calls, 'the job ran once');
+        self::assertSame('succeeded', $this->row($runId)['status']);
+        self::assertSame(['running', 'succeeded'], array_column($this->historyOf($runId), 'event_type'));
+        self::assertSame($runId, $this->locks->findByKey($lockKey)?->getRunId(), 'the lock is left to expire');
+        self::assertStringContainsString(
+            "Run '{$runId}': releasing lock '{$lockKey}' failed, it expires on its own: RuntimeException: release refused",
+            $this->log(),
+        );
+    }
+
+    /**
      * @return array{SchedulerWorker, DrainingRunRepository}
      */
     private function worker(
         ?ScheduledRunRepositoryInterface $runs = null,
         ?SchedulerRunHistoryRepository $finalHistory = null,
+        ?SchedulerLockRepositoryInterface $lockRepository = null,
     ): array
     {
         $loop = new DrainingRunRepository($runs ?? $this->runs, $this->orm->getAdapter(), $this->pool);
         $config = new SchedulerConfig(defaultPool: $this->pool, pollIntervalSeconds: 1, leaseTtlSeconds: 300, lockTtlSeconds: 300);
         $leases = new RunLeaseManager($loop, $config->leaseTtlSeconds);
-        $locks = new SchedulerLockManager($this->locks, $config->lockTtlSeconds);
+        $locks = new SchedulerLockManager($lockRepository ?? $this->locks, $config->lockTtlSeconds);
 
         $worker = new SchedulerWorker(
             leaseManager: $leases,
@@ -896,5 +926,38 @@ final class InsertRefusedAdapter implements DatabaseAdapterInterface
     public function lastInsertId(): string
     {
         return $this->inner->lastInsertId();
+    }
+}
+
+/** Pass-through lock repository whose release the database refuses. */
+final class ReleaseRefusedLockRepository implements SchedulerLockRepositoryInterface
+{
+    public function __construct(private readonly SchedulerLockRepositoryInterface $inner)
+    {
+    }
+
+    public function acquire(string $lockKey, string $runId, string $workerId, int $ttlSeconds): bool
+    {
+        return $this->inner->acquire($lockKey, $runId, $workerId, $ttlSeconds);
+    }
+
+    public function extend(string $lockKey, string $workerId, int $ttlSeconds): bool
+    {
+        return $this->inner->extend($lockKey, $workerId, $ttlSeconds);
+    }
+
+    public function release(string $lockKey, string $workerId): void
+    {
+        throw new \RuntimeException('release refused');
+    }
+
+    public function findByKey(string $lockKey): ?SchedulerLock
+    {
+        return $this->inner->findByKey($lockKey);
+    }
+
+    public function deleteExpired(\DateTimeImmutable $now): int
+    {
+        return $this->inner->deleteExpired($now);
     }
 }
