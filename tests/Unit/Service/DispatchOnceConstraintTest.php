@@ -66,6 +66,12 @@ final class DispatchOnceConstraintTest extends TestCase
         $scheduler->dispatchOnceAt('café', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: 'museum');
         $scheduler->dispatchOnceAt('daily-report ', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: 'museum');
 
+        // No tenant, said as '' or as null, is one run with no tenant.
+        $scheduler->dispatchOnceAt('nightly', \stdClass::class, new \DateTimeImmutable('+1 hour'), tenantId: '');
+        self::assertNull(end($saved)->getTenantId(), "'' is stored as no tenant");
+        self::assertSame('once::nightly', end($saved)->getOccurrenceKey());
+        array_pop($saved);
+
         self::assertSame(
             [
                 'once:museum:daily-report',

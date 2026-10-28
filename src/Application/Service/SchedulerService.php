@@ -81,6 +81,9 @@ final class SchedulerService implements DeduplicatingSchedulerInterface
         if (!isset($this->factory)) {
             throw new \RuntimeException('DelayedRunFactory is not available.');
         }
+        // '' and null both mean no tenant: they made one key and two kinds of
+        // run, so the second was taken as already scheduled. One meaning, one row.
+        $tenantId = $tenantId === '' ? null : $tenantId;
         $storedKey = self::storedOccurrenceKey($occurrenceKey, $tenantId);
         // The unique occurrence_key index decides: of two at once, one row.
         try {
