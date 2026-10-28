@@ -169,10 +169,17 @@ final class SchedulerWorker
                 if (!$this->runRepository->finalizeIfOwned($run, $owner)) {
                     throw LeaseLostException::forRun($run->getId(), $workerId);
                 }
-                $this->historyRepository->append(
-                    $run->getId(), 'succeeded', 'running', RunStatus::Succeeded->value,
-                    $workerId, 'Job completed successfully',
-                );
+                // The run is recorded as succeeded from here on: a history row
+                // that fails to land is logged, not reported as a failed run
+                // (scheduler:run-now --inline would invite running it again).
+                try {
+                    $this->historyRepository->append(
+                        $run->getId(), 'succeeded', 'running', RunStatus::Succeeded->value,
+                        $workerId, 'Job completed successfully',
+                    );
+                } catch (\Throwable $e) {
+                    $this->log("Run '{$run->getId()}' succeeded, but writing its history failed: " . get_class($e) . ': ' . $e->getMessage(), 'error');
+                }
                 $this->log("Run '{$run->getId()}' succeeded.");
             } else {
                 $error = $result->error ?? 'Unknown error';

@@ -12,6 +12,7 @@ use Semitexa\Core\Container\Store\InstanceStore;
 use Semitexa\Orm\Adapter\DatabaseAdapterInterface;
 use Semitexa\Orm\Adapter\QueryResult;
 use Semitexa\Orm\Adapter\ServerCapability;
+use Semitexa\Orm\Application\Service\Persistence\AggregateWriteEngine;
 use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Scheduler\Application\Db\MySQL\Repository\ScheduleDefinitionRepository;
@@ -441,9 +442,46 @@ final class SchedulerWorkerEndToEndTest extends TestCase
     }
 
     /**
+     * scheduler:run-now --inline said the run failed when only the history
+     * row of its success could not be written: the run was already stored as
+     * succeeded, and a retry by the operator would have run the job twice.
+     */
+    #[Test]
+    public function a_single_run_whose_success_history_cannot_be_written_is_still_a_success(): void
+    {
+        $runId = $this->dispatch();
+        $run = $this->runs->findById($runId);
+        self::assertNotNull($run);
+        // Writes run through the ORM's write engine (inside a transaction on
+        // the pool), not the plain adapter: the engine is the seam.
+        $refusingOrm = new OrmManager();
+        (new \ReflectionProperty(OrmManager::class, 'aggregateWriteEngine'))->setValue(
+            $refusingOrm,
+            new AggregateWriteEngine(
+                new InsertRefusedAdapter($this->orm->getAdapter()),
+                $refusingOrm->getResourceModelHydrator(),
+                $refusingOrm->getResourceModelMetadataRegistry(),
+            ),
+        );
+        [$worker] = $this->worker(finalHistory: self::withOrm(new SchedulerRunHistoryRepository(), $refusingOrm));
+
+        self::assertTrue($worker->processSingle($run, 'run-now-inline-test'));
+        self::assertCount(1, SchedulerEndToEndJob::$calls, 'the job ran once');
+        self::assertSame('succeeded', $this->row($runId)['status']);
+        self::assertSame(['running'], array_column($this->historyOf($runId), 'event_type'), 'the success row is the one that was refused');
+        self::assertStringContainsString(
+            "Run '{$runId}' succeeded, but writing its history failed: RuntimeException: history refused",
+            $this->log(),
+        );
+    }
+
+    /**
      * @return array{SchedulerWorker, DrainingRunRepository}
      */
-    private function worker(?ScheduledRunRepositoryInterface $runs = null): array
+    private function worker(
+        ?ScheduledRunRepositoryInterface $runs = null,
+        ?SchedulerRunHistoryRepository $finalHistory = null,
+    ): array
     {
         $loop = new DrainingRunRepository($runs ?? $this->runs, $this->orm->getAdapter(), $this->pool);
         $config = new SchedulerConfig(defaultPool: $this->pool, pollIntervalSeconds: 1, leaseTtlSeconds: 300, lockTtlSeconds: 300);
@@ -457,7 +495,7 @@ final class SchedulerWorkerEndToEndTest extends TestCase
             overlapHandler: new OverlapPolicyHandler($loop, $locks, $this->definitions, $this->history),
             executor: new RunExecutor($loop, $this->history),
             retryScheduler: new RetryScheduler($loop, $this->history),
-            historyRepository: $this->history,
+            historyRepository: $finalHistory ?? $this->history,
             config: $config,
         );
         $worker->setOutput($this->output);
@@ -821,5 +859,42 @@ final class FinalizeRefusedRunRepository implements ScheduledRunRepositoryInterf
     public function reclaimExpiredLeases(\DateTimeImmutable $now): int
     {
         return $this->inner->reclaimExpiredLeases($now);
+    }
+}
+
+/** Pass-through adapter that refuses every write: the database said no to the insert. */
+final class InsertRefusedAdapter implements DatabaseAdapterInterface
+{
+    public function __construct(private readonly DatabaseAdapterInterface $inner)
+    {
+    }
+
+    public function execute(string $sql, array $params = []): QueryResult
+    {
+        if (stripos(ltrim($sql), 'INSERT') === 0) {
+            throw new \RuntimeException('history refused');
+        }
+
+        return $this->inner->execute($sql, $params);
+    }
+
+    public function supports(ServerCapability $capability): bool
+    {
+        return $this->inner->supports($capability);
+    }
+
+    public function getServerVersion(): string
+    {
+        return $this->inner->getServerVersion();
+    }
+
+    public function query(string $sql): QueryResult
+    {
+        return $this->inner->query($sql);
+    }
+
+    public function lastInsertId(): string
+    {
+        return $this->inner->lastInsertId();
     }
 }
