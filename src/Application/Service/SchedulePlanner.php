@@ -120,12 +120,14 @@ final class SchedulePlanner
         // the outage.
         $planned = 0;
         $batch = [];
+        // Read once for the pass, and not at all when the misfire policy kept nothing.
+        $tenants = $toSchedule === [] ? null : $this->tenantExpander->tenantsFor($tenantMode);
         foreach ($toSchedule as $scheduledFor) {
             $base = new ScheduledOccurrence(
                 scheduleKey: $definition->getScheduleKey(),
                 scheduledFor: $scheduledFor,
             );
-            foreach ($this->tenantExpander->expand($base, $tenantMode) as $occurrence) {
+            foreach ($this->tenantExpander->expand($base, $tenantMode, $tenants) as $occurrence) {
                 $batch[] = $occurrence;
                 if (count($batch) >= self::BATCH) {
                     $planned += $this->materializeBatch($definition, $batch, $output);

@@ -13,7 +13,9 @@ use Semitexa\Scheduler\Application\Service\SchedulePlanner;
 use Semitexa\Scheduler\Application\Service\TenantOccurrenceExpander;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 use Semitexa\Orm\OrmManager;
+use Semitexa\Scheduler\Tests\Support\CountingTenantRepository;
 use Semitexa\Scheduler\Tests\Support\InMemoryScheduleDefinitions;
+use Semitexa\Tenancy\Domain\Model\Tenant;
 use Semitexa\Scheduler\Tests\Support\RepositoryHarness;
 
 /**
@@ -102,6 +104,41 @@ final class SchedulePlannerQueryBudgetTest extends TestCase
         // pass never holds more than 500 occurrences.
         $selects = array_keys(array_filter($sql, static fn (string $q): bool => str_starts_with($q, 'SELECT')));
         self::assertSame([0, 501, 1002], array_values($selects));
+    }
+
+    #[Test]
+    public function a_per_tenant_pass_reads_the_tenants_once_not_once_per_occurrence(): void
+    {
+        $tenants = new CountingTenantRepository(Tenant::create('acme', 'Acme'), Tenant::create('globex', 'Globex'));
+        $runs = RepositoryHarness::repository(ScheduledRunRepository::class, $this->orm);
+        $planner = new SchedulePlanner($this->definitions, $runs, new CronOccurrenceCalculator(), new MisfirePolicyResolver(), new TenantOccurrenceExpander($tenants));
+        $definition = $this->everyMinute(cursor: '2026-11-03 08:00:00');
+        $definition->setTenantMode('per_tenant');
+        $this->definitions->save($definition);
+
+        $planned = $planner->plan(new \DateTimeImmutable('2026-11-03 10:00:00 UTC'));
+
+        self::assertSame(240, $planned, '120 occurrences for each of 2 tenants');
+        self::assertSame(1, $tenants->findAllCalls);
+    }
+
+    #[Test]
+    public function a_per_tenant_pass_whose_misfire_policy_keeps_nothing_reads_no_tenants(): void
+    {
+        $tenants = new CountingTenantRepository(Tenant::create('acme', 'Acme'));
+        $runs = RepositoryHarness::repository(ScheduledRunRepository::class, $this->orm);
+        $planner = new SchedulePlanner($this->definitions, $runs, new CronOccurrenceCalculator(), new MisfirePolicyResolver(), new TenantOccurrenceExpander($tenants));
+        // Hourly, last due at 09:00 and planned at 09:30: skip drops it as missed.
+        $definition = $this->everyMinute(cursor: '2026-11-03 08:30:00');
+        $definition->setCronExpression('0 * * * *');
+        $definition->setMisfirePolicy('skip');
+        $definition->setTenantMode('per_tenant');
+        $this->definitions->save($definition);
+
+        $planned = $planner->plan(new \DateTimeImmutable('2026-11-03 09:30:00 UTC'));
+
+        self::assertSame(0, $planned);
+        self::assertSame(0, $tenants->findAllCalls);
     }
 
     #[Test]
