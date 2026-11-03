@@ -123,6 +123,25 @@ final class SchedulePlannerQueryBudgetTest extends TestCase
     }
 
     #[Test]
+    public function a_per_tenant_pass_whose_misfire_policy_keeps_nothing_reads_no_tenants(): void
+    {
+        $tenants = new CountingTenantRepository(Tenant::create('acme', 'Acme'));
+        $runs = RepositoryHarness::repository(ScheduledRunRepository::class, $this->orm);
+        $planner = new SchedulePlanner($this->definitions, $runs, new CronOccurrenceCalculator(), new MisfirePolicyResolver(), new TenantOccurrenceExpander($tenants));
+        // Hourly, last due at 09:00 and planned at 09:30: skip drops it as missed.
+        $definition = $this->everyMinute(cursor: '2026-11-03 08:30:00');
+        $definition->setCronExpression('0 * * * *');
+        $definition->setMisfirePolicy('skip');
+        $definition->setTenantMode('per_tenant');
+        $this->definitions->save($definition);
+
+        $planned = $planner->plan(new \DateTimeImmutable('2026-11-03 09:30:00 UTC'));
+
+        self::assertSame(0, $planned);
+        self::assertSame(0, $tenants->findAllCalls);
+    }
+
+    #[Test]
     public function a_second_pass_over_the_same_window_plans_nothing_and_writes_nothing(): void
     {
         $this->definitions->save($this->everyMinute(cursor: '2026-11-03 08:00:00'));
