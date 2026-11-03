@@ -12,14 +12,18 @@ use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Scheduler\Application\Service\DatabaseClock;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunOccurrenceLookupInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
 use Semitexa\Scheduler\Domain\Enum\RunStatus;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
 #[SatisfiesRepositoryContract(of: ScheduledRunRepositoryInterface::class)]
-final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, ScheduledRunRetentionInterface
+final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, ScheduledRunRetentionInterface, ScheduledRunOccurrenceLookupInterface
 {
+    /** Keys per statement: bounds the IN list and its placeholders. */
+    private const OCCURRENCE_KEY_CHUNK = 500;
+
     #[InjectAsReadonly]
     protected OrmManager $orm;
 
@@ -37,6 +41,23 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
         return $this->repository()->query()
             ->where(SchedulerRunResource::column('occurrence_key'), Operator::Equals, $occurrenceKey)
             ->fetchOneAs(ScheduledRun::class, $this->orm()->getMapperRegistry());
+    }
+
+    public function findPlannedOccurrenceKeys(array $occurrenceKeys): array
+    {
+        $planned = [];
+        foreach (array_chunk(array_values(array_unique($occurrenceKeys)), self::OCCURRENCE_KEY_CHUNK) as $chunk) {
+            $rows = $this->repository()->query()
+                ->whereIn(SchedulerRunResource::column('occurrence_key'), $chunk)
+                ->fetchAll();
+            foreach ($rows as $row) {
+                if ($row instanceof SchedulerRunResource && $row->occurrence_key !== null) {
+                    $planned[] = $row->occurrence_key;
+                }
+            }
+        }
+
+        return $planned;
     }
 
     public function save(ScheduledRun $entity): void
