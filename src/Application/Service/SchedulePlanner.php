@@ -7,6 +7,7 @@ namespace Semitexa\Scheduler\Application\Service;
 use Semitexa\Core\Log\StaticLoggerBridge;
 use Semitexa\Orm\Exception\ConstraintViolationException;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunOccurrenceLookupInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
@@ -20,6 +21,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 final class SchedulePlanner
 {
+    /** Occurrences planned per read of their planned keys. */
+    private const BATCH = 500;
+
     public function __construct(
         private readonly ScheduleDefinitionRepositoryInterface $definitionRepository,
         private readonly ScheduledRunRepositoryInterface $runRepository,
@@ -110,17 +114,26 @@ final class SchedulePlanner
             static fn (\DateTimeImmutable $at): bool => !isset($kept[$at->getTimestamp()]),
         )), $now, $output);
 
+        // Expanded and planned a batch at a time: one read of the batch's
+        // planned keys, then its inserts. Holding every expanded occurrence
+        // of an uncapped catch-up (times the tenants) until the end grew with
+        // the outage.
         $planned = 0;
-
+        $batch = [];
         foreach ($toSchedule as $scheduledFor) {
             $base = new ScheduledOccurrence(
                 scheduleKey: $definition->getScheduleKey(),
                 scheduledFor: $scheduledFor,
             );
             foreach ($this->tenantExpander->expand($base, $tenantMode) as $occurrence) {
-                $planned += $this->materializeRun($definition, $occurrence, $output);
+                $batch[] = $occurrence;
+                if (count($batch) >= self::BATCH) {
+                    $planned += $this->materializeBatch($definition, $batch, $output);
+                    $batch = [];
+                }
             }
         }
+        $planned += $this->materializeBatch($definition, $batch, $output);
 
         // Advance cursor to the last computed occurrence (whether or not runs were created)
         $this->definitionRepository->advancePlanningCursor(
@@ -179,12 +192,52 @@ final class SchedulePlanner
         return $this->runRepository->findByOccurrenceKey($occurrenceKey) !== null;
     }
 
-    private function materializeRun(ScheduleDefinition $definition, ScheduledOccurrence $occurrence, ?OutputInterface $output): int
+    /** @param list<ScheduledOccurrence> $batch */
+    private function materializeBatch(ScheduleDefinition $definition, array $batch, ?OutputInterface $output): int
+    {
+        $alreadyPlanned = $this->plannedKeys($batch);
+        $planned = 0;
+        foreach ($batch as $occurrence) {
+            $planned += $this->materializeRun($definition, $occurrence, $output, $alreadyPlanned);
+        }
+
+        return $planned;
+    }
+
+    /**
+     * The keys among $occurrences that already have a run, in one read: a
+     * catch-up of N occurrences used to cost N SELECTs before its inserts. Null when the repository cannot answer in
+     * bulk; each occurrence is then looked up on its own.
+     *
+     * @param list<ScheduledOccurrence> $occurrences
+     * @return array<string, true>|null
+     */
+    private function plannedKeys(array $occurrences): ?array
+    {
+        if (!$this->runRepository instanceof ScheduledRunOccurrenceLookupInterface || $occurrences === []) {
+            return null;
+        }
+
+        $keys = array_map(static fn (ScheduledOccurrence $o): string => $o->occurrenceKey(), $occurrences);
+
+        return array_fill_keys($this->runRepository->findPlannedOccurrenceKeys($keys), true);
+    }
+
+    /**
+     * @param array<string, true>|null $alreadyPlanned keys read for the whole pass; null = look this one up
+     */
+    private function materializeRun(ScheduleDefinition $definition, ScheduledOccurrence $occurrence, ?OutputInterface $output, ?array $alreadyPlanned): int
     {
         $occurrenceKey = $occurrence->occurrenceKey();
 
-        if ($this->runRepository->findByOccurrenceKey($occurrenceKey) !== null) {
-            return 0; // Idempotency: already planned
+        // Idempotency: already planned. A key inserted by another planner
+        // after the pass read its keys is refused by the unique index and
+        // recognised below, as it was after the per-key check.
+        $known = $alreadyPlanned !== null
+            ? isset($alreadyPlanned[$occurrenceKey])
+            : $this->runRepository->findByOccurrenceKey($occurrenceKey) !== null;
+        if ($known) {
+            return 0;
         }
 
         $overlapPolicy = OverlapPolicy::from($definition->getOverlapPolicy());
