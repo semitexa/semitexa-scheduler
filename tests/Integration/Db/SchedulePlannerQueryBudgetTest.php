@@ -86,16 +86,22 @@ final class SchedulePlannerQueryBudgetTest extends TestCase
     }
 
     #[Test]
-    public function the_keys_are_read_in_chunks_so_no_statement_grows_without_bound(): void
+    public function the_occurrences_are_planned_in_batches_so_neither_memory_nor_a_statement_grows_with_the_outage(): void
     {
-        // 1 200 occurrences: three chunks of at most 500 keys.
+        // 1 200 occurrences: three batches of at most 500.
         $this->definitions->save($this->everyMinute(cursor: '2026-11-02 14:00:00'));
 
         $this->orm->enableQueryLog();
         $planned = $this->planner->plan(new \DateTimeImmutable('2026-11-03 10:00:00 UTC'));
 
+        $sql = $this->statements();
+
         self::assertSame(1200, $planned);
-        self::assertSame(3, self::statementsStarting($this->statements(), 'SELECT'));
+        self::assertSame(3, self::statementsStarting($sql, 'SELECT'));
+        // A batch is read, then inserted, before the next is expanded: the
+        // pass never holds more than 500 occurrences.
+        $selects = array_keys(array_filter($sql, static fn (string $q): bool => str_starts_with($q, 'SELECT')));
+        self::assertSame([0, 501, 1002], array_values($selects));
     }
 
     #[Test]

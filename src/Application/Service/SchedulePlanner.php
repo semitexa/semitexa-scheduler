@@ -21,6 +21,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 final class SchedulePlanner
 {
+    /** Occurrences planned per read of their planned keys. */
+    private const BATCH = 500;
+
     public function __construct(
         private readonly ScheduleDefinitionRepositoryInterface $definitionRepository,
         private readonly ScheduledRunRepositoryInterface $runRepository,
@@ -111,22 +114,26 @@ final class SchedulePlanner
             static fn (\DateTimeImmutable $at): bool => !isset($kept[$at->getTimestamp()]),
         )), $now, $output);
 
-        $expanded = [];
+        // Expanded and planned a batch at a time: one read of the batch's
+        // planned keys, then its inserts. Holding every expanded occurrence
+        // of an uncapped catch-up (times the tenants) until the end grew with
+        // the outage.
+        $planned = 0;
+        $batch = [];
         foreach ($toSchedule as $scheduledFor) {
             $base = new ScheduledOccurrence(
                 scheduleKey: $definition->getScheduleKey(),
                 scheduledFor: $scheduledFor,
             );
             foreach ($this->tenantExpander->expand($base, $tenantMode) as $occurrence) {
-                $expanded[] = $occurrence;
+                $batch[] = $occurrence;
+                if (count($batch) >= self::BATCH) {
+                    $planned += $this->materializeBatch($definition, $batch, $output);
+                    $batch = [];
+                }
             }
         }
-
-        $alreadyPlanned = $this->plannedKeys($expanded);
-        $planned = 0;
-        foreach ($expanded as $occurrence) {
-            $planned += $this->materializeRun($definition, $occurrence, $output, $alreadyPlanned);
-        }
+        $planned += $this->materializeBatch($definition, $batch, $output);
 
         // Advance cursor to the last computed occurrence (whether or not runs were created)
         $this->definitionRepository->advancePlanningCursor(
@@ -185,10 +192,21 @@ final class SchedulePlanner
         return $this->runRepository->findByOccurrenceKey($occurrenceKey) !== null;
     }
 
+    /** @param list<ScheduledOccurrence> $batch */
+    private function materializeBatch(ScheduleDefinition $definition, array $batch, ?OutputInterface $output): int
+    {
+        $alreadyPlanned = $this->plannedKeys($batch);
+        $planned = 0;
+        foreach ($batch as $occurrence) {
+            $planned += $this->materializeRun($definition, $occurrence, $output, $alreadyPlanned);
+        }
+
+        return $planned;
+    }
+
     /**
-     * The keys among $occurrences that already have a run, read in one pass
-     * (chunked by the repository): a catch-up of N occurrences used to cost N
-     * SELECTs before its inserts. Null when the repository cannot answer in
+     * The keys among $occurrences that already have a run, in one read: a
+     * catch-up of N occurrences used to cost N SELECTs before its inserts. Null when the repository cannot answer in
      * bulk; each occurrence is then looked up on its own.
      *
      * @param list<ScheduledOccurrence> $occurrences
