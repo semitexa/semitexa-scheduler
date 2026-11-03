@@ -7,6 +7,7 @@ namespace Semitexa\Scheduler\Application\Service;
 use Semitexa\Scheduler\Domain\Model\ScheduledOccurrence;
 use Semitexa\Scheduler\Domain\Enum\TenantScheduleMode;
 use Semitexa\Tenancy\Domain\Contract\TenantRepositoryInterface;
+use Semitexa\Tenancy\Domain\Model\Tenant;
 
 final class TenantOccurrenceExpander
 {
@@ -25,15 +26,20 @@ final class TenantOccurrenceExpander
      * so. A tenant-blind run writes to the same `default` scope that such an
      * install already serves.
      *
+     * $tenants is what {@see tenantsFor()} read for the pass; null reads them
+     * here. A planning pass reads them once per schedule: read per occurrence,
+     * a per_tenant catch-up of N occurrences read the tenant table N times.
+     *
+     * @param array<Tenant>|null $tenants
      * @return list<ScheduledOccurrence>
      */
-    public function expand(ScheduledOccurrence $occurrence, TenantScheduleMode $mode): array
+    public function expand(ScheduledOccurrence $occurrence, TenantScheduleMode $mode, ?array $tenants = null): array
     {
         if ($mode !== TenantScheduleMode::PerTenant) {
             return [$occurrence];
         }
 
-        $tenants = $this->tenantRepository?->findAll() ?? [];
+        $tenants ??= $this->tenantRepository?->findAll() ?? [];
         if ($tenants === []) {
             return [$occurrence];
         }
@@ -47,5 +53,16 @@ final class TenantOccurrenceExpander
             );
         }
         return $expanded;
+    }
+
+    /**
+     * The tenants a pass expands to: read once, for every occurrence of one
+     * schedule. Null when the mode does not expand.
+     *
+     * @return array<Tenant>|null
+     */
+    public function tenantsFor(TenantScheduleMode $mode): ?array
+    {
+        return $mode === TenantScheduleMode::PerTenant ? ($this->tenantRepository?->findAll() ?? []) : null;
     }
 }
