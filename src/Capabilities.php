@@ -39,8 +39,8 @@ use Semitexa\Core\Attribute\Capability;
             }
         }
 
-        // Once, later. Inject SchedulerInterface; the same job class runs with this payload:
-        $this->scheduler->dispatchAfter(SendReminderJob::class, new \DateInterval('PT15M'), ['orderId' => $id]);
+        // Once, later. Inject SchedulerInterface; the job reads $context->payload:
+        $this->scheduler->dispatchAfter(NightlyReportJob::class, new \DateInterval('PT15M'), ['orderId' => $id]);
 
         // Nothing runs by itself: scheduler:plan makes due runs and scheduler:work executes them.
         // bin/semitexa scheduler:list shows what is declared. scheduler:run-now queues a run for a
