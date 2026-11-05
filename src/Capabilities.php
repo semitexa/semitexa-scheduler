@@ -34,7 +34,8 @@ use Semitexa\Core\Attribute\Capability;
         {
             public function handle(ScheduledJobContext $context): void
             {
-                // $context->tenantId is set for per_tenant; a retry is $context->attemptNumber > 1.
+                // per_tenant runs once per tenant with $context->tenantId set; it is null when no
+                // tenants are configured. A retry has $context->attemptNumber > 1.
             }
         }
 
@@ -42,7 +43,8 @@ use Semitexa\Core\Attribute\Capability;
         $this->scheduler->dispatchAfter(SendReminderJob::class, new \DateInterval('PT15M'), ['orderId' => $id]);
 
         // Nothing runs by itself: scheduler:plan makes due runs and scheduler:work executes them.
-        // bin/semitexa scheduler:list shows what is declared; scheduler:run-now runs one at once.
+        // bin/semitexa scheduler:list shows what is declared. scheduler:run-now queues a run for a
+        // worker, and with --inline it runs here and now.
         // overlapPolicy is allow, skip or delay. tenantMode is global or per_tenant.
         USAGE,
 )]
