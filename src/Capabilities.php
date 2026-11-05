@@ -26,6 +26,27 @@ use Semitexa\Core\Attribute\Capability;
         'crontab entries calling CLI scripts, with overlap handled by a lock file',
         'a sleep loop in a worker process that re-checks the time',
     ],
+    usage: <<<'USAGE'
+        // On a clock. A job is a service, and its dependencies are injected as usual.
+        #[AsService]
+        #[AsScheduledJob(key: 'shop.nightly_report', cronExpression: '0 3 * * *', tenantMode: 'per_tenant')]
+        final class NightlyReportJob implements ScheduledJobInterface
+        {
+            public function handle(ScheduledJobContext $context): void
+            {
+                // per_tenant runs once per tenant with $context->tenantId set; it is null when no
+                // tenants are configured. A retry has $context->attemptNumber > 1.
+            }
+        }
+
+        // Once, later. Inject SchedulerInterface; the same job class runs with this payload:
+        $this->scheduler->dispatchAfter(SendReminderJob::class, new \DateInterval('PT15M'), ['orderId' => $id]);
+
+        // Nothing runs by itself: scheduler:plan makes due runs and scheduler:work executes them.
+        // bin/semitexa scheduler:list shows what is declared. scheduler:run-now queues a run for a
+        // worker, and with --inline it runs here and now.
+        // overlapPolicy is allow, skip or delay. tenantMode is global or per_tenant.
+        USAGE,
 )]
 final class Capabilities
 {
