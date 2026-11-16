@@ -86,13 +86,28 @@ final class FailedRunListingTest extends TestCase
     }
 
     #[Test]
-    public function a_limit_out_of_range_is_held_to_one_and_five_hundred(): void
+    public function a_limit_below_one_is_held_to_one(): void
     {
         self::assertSame([$this->ids['failed_1m']], $this->idsOf($this->runs->failedSince(new \DateTimeImmutable('-1 hour'), 0)));
+    }
+
+    #[Test]
+    public function a_limit_above_five_hundred_is_held_to_the_latest_five_hundred(): void
+    {
+        // 501 more failures, all older than the three seeded ones: the cap must cut the oldest.
+        $oldest = new \DateTimeImmutable('-3 days');
+        for ($i = 1; $i <= 501; $i++) {
+            $this->insert("bulk_{$i}", 'failed', $oldest->modify("-{$i} minutes"), "bulk {$i}");
+        }
+
+        $runs = $this->runs->failedSince(new \DateTimeImmutable('-1 year'), 100_000);
+
+        self::assertCount(500, $runs);
         self::assertSame(
-            [$this->ids['failed_1m'], $this->ids['failed_10m'], $this->ids['failed_2d']],
-            $this->idsOf($this->runs->failedSince(new \DateTimeImmutable('-1 week'), 100_000)),
+            [$this->ids['failed_1m'], $this->ids['failed_10m'], $this->ids['failed_2d'], $this->ids['bulk_1']],
+            array_slice($this->idsOf($runs), 0, 4),
         );
+        self::assertSame($this->ids['bulk_497'], $this->idsOf($runs)[499], 'the 500th is the 497th bulk one; 498..501 are cut');
     }
 
     #[Test]
@@ -112,6 +127,8 @@ final class FailedRunListingTest extends TestCase
 
     private function insert(string $name, string $status, \DateTimeImmutable $finishedAt, ?string $error): void
     {
+        // Stored in UTC, as the ORM writes the cutoff it compares against.
+        $finishedAt = $finishedAt->setTimezone(new \DateTimeZone('UTC'));
         $id = Uuid7::generate();
         $this->ids[$name] = $id;
         $this->db->execute(
