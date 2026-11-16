@@ -7,11 +7,13 @@ namespace Semitexa\Scheduler\Application\Db\MySQL\Repository;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Core\Attribute\SatisfiesRepositoryContract;
 use Semitexa\Orm\OrmManager;
+use Semitexa\Orm\Query\Direction;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Scheduler\Application\Service\DatabaseClock;
 use Semitexa\Scheduler\Application\Db\MySQL\Model\SchedulerRunResource;
+use Semitexa\Scheduler\Domain\Contract\ScheduledRunListingInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunOccurrenceLookupInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRepositoryInterface;
 use Semitexa\Scheduler\Domain\Contract\ScheduledRunRetentionInterface;
@@ -19,7 +21,7 @@ use Semitexa\Scheduler\Domain\Enum\RunStatus;
 use Semitexa\Scheduler\Domain\Model\ScheduledRun;
 
 #[SatisfiesRepositoryContract(of: ScheduledRunRepositoryInterface::class)]
-final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, ScheduledRunRetentionInterface, ScheduledRunOccurrenceLookupInterface
+final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, ScheduledRunRetentionInterface, ScheduledRunOccurrenceLookupInterface, ScheduledRunListingInterface
 {
     /** Keys per statement: bounds the IN list and its placeholders. */
     private const OCCURRENCE_KEY_CHUNK = 500;
@@ -58,6 +60,17 @@ final class ScheduledRunRepository implements ScheduledRunRepositoryInterface, S
         }
 
         return $planned;
+    }
+
+    public function failedSince(\DateTimeImmutable $since, int $limit): array
+    {
+        /** @var list<ScheduledRun> */
+        return $this->repository()->query()
+            ->where(SchedulerRunResource::column('status'), Operator::Equals, RunStatus::Failed->value)
+            ->where(SchedulerRunResource::column('finished_at'), Operator::GreaterThanOrEquals, $since)
+            ->orderBy(SchedulerRunResource::column('finished_at'), Direction::Desc)
+            ->limit(max(1, min($limit, 500)))
+            ->fetchAllAs(ScheduledRun::class, $this->orm()->getMapperRegistry());
     }
 
     public function save(ScheduledRun $entity): void
