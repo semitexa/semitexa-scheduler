@@ -7,7 +7,9 @@ namespace Semitexa\Scheduler\Application\Console\Command;
 use Semitexa\Core\Attribute\AsCommand;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Scheduler\Domain\Contract\ScheduleDefinitionRepositoryInterface;
+use Semitexa\Scheduler\Domain\Model\ScheduleDefinition;
 use Semitexa\Scheduler\Application\Service\CronOccurrenceCalculator;
+use Semitexa\Scheduler\Application\Service\ScheduleDefinitionRegistry;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -18,6 +20,9 @@ final class SchedulerListCommand extends Command
 {
     #[InjectAsReadonly]
     protected ScheduleDefinitionRepositoryInterface $definitionRepo;
+
+    #[InjectAsReadonly]
+    protected ScheduleDefinitionRegistry $registry;
 
     protected function configure(): void
     {
@@ -42,21 +47,15 @@ final class SchedulerListCommand extends Command
 
             $rows = [];
             $now  = new \DateTimeImmutable();
+            // An enabled row the planner passes over (its job class deleted, its
+            // key renamed) is kept on purpose, for deploys and rollbacks: it must
+            // not show a Next Due time it will never meet.
+            $notPlanned = $this->registry->notPlanned($definitions);
 
             foreach ($definitions as $def) {
-                try {
-                    $next = $calculator->getNextOccurrence($def->getCronExpression(), $now, $def->getTimezone());
-                    // The calculator answers in UTC; it was printed under the
-                    // row's timezone label, so a 03:00 Kyiv job read 00:00.
-                    $nextStr = $def->getTimezone() === 'UTC'
-                        ? $next->format('Y-m-d H:i:s') . ' (UTC)'
-                        : $next->setTimezone(new \DateTimeZone($def->getTimezone()))->format('Y-m-d H:i:s')
-                            . ' (' . $def->getTimezone() . '; '
-                            . $next->format($next->format('Y-m-d') === $next->setTimezone(new \DateTimeZone($def->getTimezone()))->format('Y-m-d') ? 'H:i' : 'Y-m-d H:i')
-                            . ' UTC)';
-                } catch (\Throwable) {
-                    $nextStr = '(invalid expression)';
-                }
+                $nextStr = isset($notPlanned[$def->getScheduleKey()])
+                    ? 'not planned: ' . $notPlanned[$def->getScheduleKey()]
+                    : $this->nextDue($calculator, $def, $now);
 
                 $rows[] = [
                     $def->getScheduleKey(),
@@ -80,5 +79,22 @@ final class SchedulerListCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    private function nextDue(CronOccurrenceCalculator $calculator, ScheduleDefinition $def, \DateTimeImmutable $now): string
+    {
+        try {
+            $next = $calculator->getNextOccurrence($def->getCronExpression(), $now, $def->getTimezone());
+            // The calculator answers in UTC; it was printed under the
+            // row's timezone label, so a 03:00 Kyiv job read 00:00.
+            return $def->getTimezone() === 'UTC'
+                ? $next->format('Y-m-d H:i:s') . ' (UTC)'
+                : $next->setTimezone(new \DateTimeZone($def->getTimezone()))->format('Y-m-d H:i:s')
+                    . ' (' . $def->getTimezone() . '; '
+                    . $next->format($next->format('Y-m-d') === $next->setTimezone(new \DateTimeZone($def->getTimezone()))->format('Y-m-d') ? 'H:i' : 'Y-m-d H:i')
+                    . ' UTC)';
+        } catch (\Throwable) {
+            return '(invalid expression)';
+        }
     }
 }

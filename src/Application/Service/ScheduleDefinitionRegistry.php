@@ -94,16 +94,62 @@ final class ScheduleDefinitionRegistry
         // Discovery that found no job at all is more likely broken than right;
         // the planner then plans every row, and this says nothing either.
         $declaredKeys = $this->declaredKeys();
-        $declared = array_flip($declaredKeys ?? []);
         foreach ($this->repository()->findAllEnabled() as $definition) {
-            if (!class_exists($definition->getJobClass())) {
-                $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: its job class {$definition->getJobClass()} no longer exists.";
-            } elseif ($declaredKeys !== null && !isset($declared[$definition->getScheduleKey()])) {
-                $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: no #[AsScheduledJob] declares it any more.";
+            // A job that is not a service was reported above, by its class.
+            $reason = self::reasonNotPlanned($definition, $declaredKeys, null);
+            if ($reason !== null) {
+                $problems[] = "Schedule '{$definition->getScheduleKey()}' is not planned: {$reason}.";
             }
         }
 
         return $problems;
+    }
+
+    /**
+     * Why the planner passes over each of these enabled rows, by schedule key.
+     * scheduler:list printed a "Next Due" time for a row it never planned (a
+     * job class deleted, a key renamed), so anything that shows a schedule
+     * asks here.
+     *
+     * @param list<ScheduleDefinition> $definitions
+     * @return array<string, string> schedule key => why it is not planned
+     */
+    public function notPlanned(array $definitions): array
+    {
+        $declaredKeys = $this->declaredKeys();
+        $plannableKeys = $this->plannableKeys();
+        $reasons = [];
+        foreach ($definitions as $definition) {
+            $reason = self::reasonNotPlanned($definition, $declaredKeys, $plannableKeys);
+            if ($reason !== null) {
+                $reasons[$definition->getScheduleKey()] = $reason;
+            }
+        }
+
+        return $reasons;
+    }
+
+    /**
+     * The planner's own decision for one enabled row: why it is passed over,
+     * or null when it is planned.
+     *
+     * @param list<string>|null $declaredKeys as declaredKeys(); null plans every row whose class exists
+     * @param list<string>|null $plannableKeys as plannableKeys(); null skips that check
+     */
+    public static function reasonNotPlanned(ScheduleDefinition $definition, ?array $declaredKeys, ?array $plannableKeys): ?string
+    {
+        if (!class_exists($definition->getJobClass())) {
+            return "its job class {$definition->getJobClass()} no longer exists";
+        }
+        $key = $definition->getScheduleKey();
+        if ($declaredKeys !== null && !in_array($key, $declaredKeys, true)) {
+            return 'no #[AsScheduledJob] declares it any more';
+        }
+        if ($plannableKeys !== null && !in_array($key, $plannableKeys, true)) {
+            return 'its job is not a service, so the scheduler cannot build it';
+        }
+
+        return null;
     }
 
     /**
