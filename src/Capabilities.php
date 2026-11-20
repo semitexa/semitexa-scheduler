@@ -27,7 +27,12 @@ use Semitexa\Core\Attribute\Capability;
         'a sleep loop in a worker process that re-checks the time',
     ],
     usage: <<<'USAGE'
-        // On a clock. A job is a service, and its dependencies are injected as usual.
+        // On a clock. A job is an entry point the scheduler calls: it lives in
+        // src/Application/Job/<Feature>/, here Application/Job/Report/NightlyReportJob.php,
+        // never under Application/Service/. #[AsService] is what lets the scheduler build it,
+        // with its dependencies injected as usual.
+        namespace App\Modules\Shop\Application\Job\Report;
+
         #[AsService]
         #[AsScheduledJob(key: 'shop.nightly_report', cronExpression: '0 3 * * *', tenantMode: 'per_tenant')]
         final class NightlyReportJob implements ScheduledJobInterface
